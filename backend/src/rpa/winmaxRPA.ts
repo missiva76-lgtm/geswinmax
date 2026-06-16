@@ -1,0 +1,426 @@
+// rpa/winmaxRPA.ts — Motor RPA WinMax4 AUTOAVENIDA
+// Seletores descobertos ao vivo em 16/06/2026
+
+import * as path from 'path'
+import * as fs from 'fs'
+import { Browser, BrowserContext, Page, chromium } from 'playwright'
+import { Fatura, ResultadoFatura, ErroLinha } from '../types'
+import { logger } from '../services/logger'
+import { appendJobLog } from '../services/firebase'
+
+interface RPAConfig {
+  winmaxUrl: string
+  companyCode: string
+  utilizador: string
+  password: string
+  templatePDF: string
+  pastaDestinoPDF: string
+  jobId?: string   // para log em tempo real no Firestore
+}
+
+const SEL = {
+  loginUser:   '#txtUserCode',
+  loginPass:   '#txtPassword',
+  loginBtn:    '#btnLogin',
+  entityCode:  '#txtEntityCode',
+  entityName:  '#lblEntityName',
+  docType:     '#ddlDocumentType',
+  nextDocNum:  '#lblNextDocumentNumber',
+  articleCode: '#txtArticleCode',
+  designation: '#txtDesignation',
+  taxFeeRate:  '#ddlTaxFeeRates',
+  unitPrice:   '#txtUnitaryPrice',
+  quantity:    '#txtQuantity',
+  discount1:   '#txtDiscount1',
+  remarksBtn:  'input[id^="DetailPropertyRemarks"]',
+  remarksTxt:  '#txtRemarks',
+  confirmBtn:  '#wucButtonConfirm_linkButton1',
+  printReport: '#ddlPrintReportName',
+  msgPanel:    '#wucMessagePanel1_idMessagePanel',
+  msgBody:     '#wucMessagePanel1_LabelMessageDiv',
+}
+
+const TIPO_DOC: Record<string, string> = {
+  FAA: '37', FR: '55', FS: '46', FTB: '45', NCC: '40', GT: '49',
+}
+
+const MENU = {
+  imprimir:            'transactionDocumentsIssueCustomerStandardDocumentPrint',
+  terminar:            'transactionDocumentsIssueCustomerStandardDocumentClose',
+  terminarSemImprimir: 'transactionDocumentsIssueCustomerStandardDocumentCloseWithoutPrinting',
+}
+
+class ErroLinhaArtigo extends Error {
+  constructor(
+    public readonly linha: number,
+    public readonly artigo_ref: string,
+    msg: string
+  ) { super(msg); this.name = 'ErroLinhaArtigo' }
+}
+
+export class WinmaxRPA {
+  private browser: Browser | null = null
+  private context: BrowserContext | null = null
+  private page: Page | null = null
+  private config: RPAConfig
+
+  constructor(config: RPAConfig) { this.config = config }
+
+  private async log(msg: string) {
+    logger.info(msg)
+    if (this.config.jobId) {
+      await appendJobLog(this.config.jobId, msg).catch(() => {})
+    }
+  }
+
+  async iniciar(): Promise<void> {
+    await this.log('🚀 A iniciar browser Playwright...')
+    if (!fs.existsSync(this.config.pastaDestinoPDF)) {
+      fs.mkdirSync(this.config.pastaDestinoPDF, { recursive: true })
+    }
+    this.browser = await chromium.launch({ headless: true, slowMo: 80 })
+    this.context = await this.browser.newContext({
+      locale: 'pt-PT',
+      timezoneId: 'Europe/Lisbon',
+      acceptDownloads: true,
+    })
+    this.page = await this.context.newPage()
+    await this.log('✅ Browser iniciado (headless)')
+  }
+
+  async fechar(): Promise<void> { await this.browser?.close() }
+
+  async login(): Promise<void> {
+    const url = `https://app102.winmax4.com/Default.aspx?CompanyCode=${this.config.companyCode}`
+    await this.log(`🔑 Login: ${url}`)
+    await this.page!.goto(url, { waitUntil: 'networkidle' })
+    await this.page!.fill(SEL.loginUser, this.config.utilizador)
+    await this.page!.fill(SEL.loginPass, this.config.password)
+    await this.page!.click(SEL.loginBtn)
+    await this.page!.waitForLoadState('networkidle')
+    if (!await this.page!.locator('text=Movimentação').isVisible().catch(() => false)) {
+      await this.page!.screenshot({ path: 'logs/erro-login.png' })
+      throw new Error('Login falhou')
+    }
+    await this.log('✅ Login OK')
+  }
+
+  private async evalIn(iframeId: string, code: string): Promise<unknown> {
+    return this.page!.evaluate(
+      ({ id, code }) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        if (!f?.contentWindow) throw new Error(`Iframe não encontrado: ${id}`)
+        return (f.contentWindow as any).eval(code)
+      },
+      { id: iframeId, code }
+    )
+  }
+
+  private async waitFor(iframeId: string, selector: string, timeout = 10000): Promise<void> {
+    await this.page!.waitForFunction(
+      ({ id, sel }) => !!(document.getElementById(id) as HTMLIFrameElement)?.contentDocument?.querySelector(sel),
+      { id: iframeId, sel: selector },
+      { timeout }
+    )
+  }
+
+  private async verificarErro(di: string): Promise<string | null> {
+    return this.page!.evaluate(({ id, panelSel, bodySel }) => {
+      const f = document.getElementById(id) as HTMLIFrameElement
+      const doc = f?.contentDocument
+      if (!doc) return null
+      const panel = doc.querySelector(panelSel) as HTMLElement
+      if (!panel || panel.offsetParent === null) return null
+      const body = doc.querySelector(bodySel) as HTMLElement
+      return body?.innerText?.trim() || null
+    }, { id: di, panelSel: SEL.msgPanel, bodySel: SEL.msgBody })
+  }
+
+  private async abandonarDocumento(): Promise<void> {
+    try {
+      await this.evalIn('DocumentIssue_content',
+        `document.getElementById('wucButtonExit_linkButton1')?.click()`)
+      await this.page!.waitForTimeout(1200)
+      await this.log('  🚫 Documento abandonado')
+    } catch { /**/ }
+  }
+
+  private async abrirNovaFatura(): Promise<void> {
+    await this.page!.evaluate(() => {
+      const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
+      ;(tb?.contentDocument?.getElementById('Toolbox_ShortcutIconDiv2') as HTMLElement)?.click()
+    })
+    await this.waitFor('transactionDocumentsIssueCustomerStandard_content',
+      '#wucFileList1_wucButtonInsert_linkButton1')
+    await this.page!.waitForTimeout(800)
+    await this.page!.evaluate(() => {
+      const li = document.getElementById('transactionDocumentsIssueCustomerStandard_content') as HTMLIFrameElement
+      ;(li?.contentDocument?.getElementById('wucFileList1_wucButtonInsert_linkButton1') as HTMLElement)?.click()
+    })
+    await this.waitFor('DocumentIssue_content', SEL.entityCode)
+    await this.page!.waitForTimeout(800)
+  }
+
+  private async preencherCabecalho(fatura: Fatura): Promise<void> {
+    const di = 'DocumentIssue_content'
+    const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
+    await this.evalIn(di, `
+      const s = document.getElementById('ddlDocumentType');
+      s.value = '${tipoVal}';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+    `)
+    await this.page!.waitForTimeout(400)
+    // Data = data do sistema (não se preenche)
+    await this.evalIn(di, `
+      const e = document.getElementById('txtEntityCode');
+      e.value = '${fatura.cliente_codigo}';
+      e.dispatchEvent(new Event('change', { bubbles: true }));
+      e.dispatchEvent(new Event('blur', { bubbles: true }));
+    `)
+    await this.page!.waitForTimeout(1000)
+    const erroEnt = await this.verificarErro(di)
+    if (erroEnt) throw new Error(`Cliente inválido (${fatura.cliente_codigo}): ${erroEnt}`)
+    const nome = await this.evalIn(di, `document.getElementById('lblEntityName')?.innerText || ''`)
+    await this.log(`  👤 ${nome} (${fatura.cliente_codigo}) | ${fatura.tipo_documento}`)
+  }
+
+  private async adicionarLinhaArtigo(linha: Fatura['linhas'][0], idx: number): Promise<void> {
+    const di = 'DocumentIssue_content'
+    const n = idx + 1
+
+    await this.evalIn(di, `
+      ['txtArticleCode','txtDesignation','txtUnitaryPrice','txtQuantity','txtDiscount1']
+        .forEach(id => { const el = document.getElementById(id); if(el){ el.value=''; el.dispatchEvent(new Event('change',{bubbles:true})); }});
+    `)
+    await this.page!.waitForTimeout(200)
+
+    // Insere referência do artigo — WinMax4 preenche descrição e IVA automaticamente
+    await this.evalIn(di, `
+      const a = document.getElementById('txtArticleCode');
+      a.value = '${linha.artigo_ref.replace(/'/g, "\\'")}';
+      a.dispatchEvent(new Event('change', { bubbles: true }));
+      a.dispatchEvent(new Event('blur', { bubbles: true }));
+    `)
+    await this.page!.waitForTimeout(800)
+
+    const erroArtigo = await this.verificarErro(di)
+    if (erroArtigo) throw new ErroLinhaArtigo(n, linha.artigo_ref,
+      `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
+
+    // Preço (vem do Excel)
+    await this.evalIn(di, `
+      const p = document.getElementById('txtUnitaryPrice');
+      p.value = '${String(linha.preco_unitario).replace('.', ',')}';
+      p.dispatchEvent(new Event('change', { bubbles: true }));
+      p.dispatchEvent(new Event('blur', { bubbles: true }));
+    `)
+    await this.page!.waitForTimeout(200)
+
+    // Quantidade (vem do Excel)
+    await this.evalIn(di, `
+      const q = document.getElementById('txtQuantity');
+      q.value = '${String(linha.quantidade).replace('.', ',')}';
+      q.dispatchEvent(new Event('change', { bubbles: true }));
+      q.dispatchEvent(new Event('blur', { bubbles: true }));
+    `)
+    await this.page!.waitForTimeout(200)
+
+    // Desconto (vem do Excel)
+    if (linha.desconto_pct > 0) {
+      await this.evalIn(di, `
+        const d = document.getElementById('txtDiscount1');
+        d.value = '${String(linha.desconto_pct).replace('.', ',')}';
+        d.dispatchEvent(new Event('change', { bubbles: true }));
+        d.dispatchEvent(new Event('blur', { bubbles: true }));
+      `)
+    }
+
+    // IVA e descrição vêm da ficha do artigo no WinMax4 — não se preenchem
+
+    await this.evalIn(di, `window.InsertDocumentDetail()`)
+    await this.page!.waitForTimeout(1200)
+
+    const erroInsert = await this.verificarErro(di)
+    if (erroInsert) throw new ErroLinhaArtigo(n, linha.artigo_ref,
+      `Linha ${n} — "${linha.artigo_ref}": ${erroInsert}`)
+
+    await this.log(`  📦 Linha ${n}: ${linha.artigo_ref} x${linha.quantidade} @ ${linha.preco_unitario}€`)
+  }
+
+  private async adicionarComentario(comentario: string): Promise<void> {
+    const di = 'DocumentIssue_content'
+    const tem = await this.evalIn(di,
+      `!!document.querySelector('input[id^="DetailPropertyRemarks"]')`) as boolean
+    if (!tem) { await this.log('  💬 Artigo sem textarea de comentário'); return }
+
+    await this.evalIn(di, `document.querySelector('input[id^="DetailPropertyRemarks"]')?.click()`)
+    await this.page!.waitForTimeout(500)
+    await this.evalIn(di, `window.__doPostBack('lbProcessPropertyIconClick','')`)
+    await this.page!.waitForTimeout(1500)
+    await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
+
+    await this.page!.evaluate(({ txt }) => {
+      const f = document.getElementById('DocumentIssueDocumentDetailRemarks_content') as HTMLIFrameElement
+      const ta = f?.contentDocument?.getElementById('txtRemarks') as HTMLTextAreaElement
+      if (ta) { ta.value = txt; ta.dispatchEvent(new Event('change', { bubbles: true })) }
+    }, { txt: comentario })
+
+    await this.page!.evaluate(() => {
+      const f = document.getElementById('DocumentIssueDocumentDetailRemarks_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+    })
+    await this.page!.waitForTimeout(1000)
+    await this.log('  💬 Comentário adicionado')
+  }
+
+  private async imprimirEGuardarPDF(numPrevisto: string): Promise<string> {
+    const di = 'DocumentIssue_content'
+    const downloadPromise = this.page!.waitForEvent('download', { timeout: 20000 })
+
+    await this.evalIn(di, `
+      document.getElementById('wucModernMenu_hfSelectedOption').value = '${MENU.imprimir}';
+      window.__doPostBack('wucModernMenu$lbSelectOption','');
+    `)
+    await this.page!.waitForTimeout(2000)
+    await this.waitFor('DocumentIssuePrint_content', SEL.printReport, 8000)
+
+    await this.page!.evaluate(({ tpl }) => {
+      const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
+      const ddl = f?.contentDocument?.getElementById('ddlPrintReportName') as HTMLSelectElement
+      if (ddl) { ddl.value = tpl; ddl.dispatchEvent(new Event('change', { bubbles: true })) }
+    }, { tpl: this.config.templatePDF })
+
+    await this.page!.evaluate(() => {
+      const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+    })
+
+    try {
+      const download = await downloadPromise
+      const nomeSeguro = numPrevisto.replace(/[\/\\:*?"<>|]/g, '_')
+      const destino = path.join(this.config.pastaDestinoPDF, `${nomeSeguro}.pdf`)
+      await download.saveAs(destino)
+      await this.log(`  🖨️  PDF: ${destino}`)
+      return destino
+    } catch {
+      await this.log('  ⚠️  PDF: download não interceptado')
+      return ''
+    }
+  }
+
+  private async terminarDocumento(fatura: Fatura): Promise<{ numDoc: string; localPDF: string }> {
+    const di = 'DocumentIssue_content'
+    const numPrevisto = await this.evalIn(di,
+      `document.getElementById('lblNextDocumentNumber')?.innerText?.replace(/[()]/g,'').trim() || 'doc'`
+    ) as string
+
+    const localPDF = await this.imprimirEGuardarPDF(numPrevisto)
+
+    await this.evalIn(di, `
+      document.getElementById('wucModernMenu_hfSelectedOption').value = '${MENU.terminar}';
+      window.__doPostBack('wucModernMenu$lbSelectOption','');
+    `)
+    await this.page!.waitForTimeout(1500)
+
+    await this.page!.evaluate(() => {
+      const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+      const win = f?.contentWindow as any
+      if (typeof win?.ConfirmDocumentCloseWindow === 'function') win.ConfirmDocumentCloseWindow()
+    }).catch(() => {})
+    await this.page!.waitForTimeout(1500)
+
+    const numDoc = await this.evalIn(di,
+      `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
+    ) as string
+
+    // Renomeia o PDF com o número definitivo
+    if (localPDF && numDoc && numDoc !== numPrevisto) {
+      const nomeSeguro = numDoc.replace(/[\/\\:*?"<>|]/g, '_')
+      const novo = path.join(this.config.pastaDestinoPDF, `${nomeSeguro}.pdf`)
+      try { fs.renameSync(localPDF, novo) } catch { /**/ }
+    }
+
+    return { numDoc: numDoc || 'EMITIDO', localPDF }
+  }
+
+  async criarFatura(fatura: Fatura): Promise<ResultadoFatura> {
+    const inicio = Date.now()
+    const errosLinhas: ErroLinha[] = []
+
+    await this.abrirNovaFatura()
+    await this.preencherCabecalho(fatura)
+    await this.log(`  📋 ${fatura.linhas.length} linha(s)`)
+
+    for (let i = 0; i < fatura.linhas.length; i++) {
+      const linha = fatura.linhas[i]
+      try {
+        await this.adicionarLinhaArtigo(linha, i)
+        if (linha.comentario?.trim()) await this.adicionarComentario(linha.comentario)
+      } catch (err) {
+        if (err instanceof ErroLinhaArtigo) {
+          errosLinhas.push({ linha: err.linha, artigo_ref: err.artigo_ref, mensagem: err.message })
+          await this.log(`  ❌ ${err.message}`)
+          await this.log('  ⛔ A abandonar documento')
+          await this.abandonarDocumento()
+          return {
+            index: 0, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
+            tipo_documento: fatura.tipo_documento, sucesso: false,
+            total_linhas: fatura.linhas.length, linhas_ok: i,
+            erros_linhas: errosLinhas, erro: err.message, duracao_ms: Date.now() - inicio,
+          }
+        }
+        throw err
+      }
+    }
+
+    const { numDoc, localPDF } = await this.terminarDocumento(fatura)
+    return {
+      index: 0, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
+      tipo_documento: fatura.tipo_documento, sucesso: true,
+      numero_documento: numDoc,
+      pdf_url: localPDF,   // substituído por URL Firebase Storage no job handler
+      total_linhas: fatura.linhas.length, linhas_ok: fatura.linhas.length,
+      duracao_ms: Date.now() - inicio,
+    }
+  }
+
+  async processarFaturas(
+    faturas: Fatura[],
+    onProgresso?: (pct: number, resultado: ResultadoFatura) => void
+  ): Promise<ResultadoFatura[]> {
+    const resultados: ResultadoFatura[] = []
+    await this.log(`\n📋 ${faturas.length} fatura(s)`)
+
+    for (let i = 0; i < faturas.length; i++) {
+      const fatura = faturas[i]
+      await this.log(`\n[${i+1}/${faturas.length}] ${fatura.cliente_nome} | ${fatura.tipo_documento}`)
+
+      let resultado: ResultadoFatura
+      try {
+        resultado = await this.criarFatura(fatura)
+        resultado.index = i + 1
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        await this.page?.screenshot({ path: `logs/erro-${i+1}.png` }).catch(() => {})
+        resultado = {
+          index: i+1, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
+          tipo_documento: fatura.tipo_documento, sucesso: false,
+          total_linhas: fatura.linhas.length, linhas_ok: 0, erro: msg,
+        }
+        await this.log(`  ❌ ${msg}`)
+      }
+
+      resultados.push(resultado)
+      if (onProgresso) {
+        const pct = Math.round(((i + 1) / faturas.length) * 100)
+        onProgresso(pct, resultado)
+      }
+
+      if (i < faturas.length - 1) await this.page?.waitForTimeout(2000)
+    }
+
+    const ok = resultados.filter(r => r.sucesso).length
+    await this.log(`\n✅ Emitidas: ${ok} | ❌ Erros: ${resultados.length - ok}`)
+    return resultados
+  }
+}

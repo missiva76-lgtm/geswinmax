@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: geswinmax-backend
+    runtime: node
+    region: frankfurt
+    branch: main
+    rootDir: backend
+    buildCommand: npm install && npx playwright install chromium --with-deps && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: NODE_ENV
+        value: production
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+    healthCheckPath: /health
