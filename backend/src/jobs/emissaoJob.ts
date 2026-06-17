@@ -11,7 +11,7 @@ import { logger } from '../services/logger'
 interface LinhaRaw {
   fatura_id: string | number       // agrupa linhas na mesma fatura
   cliente_codigo: string | number
-  cliente_nome: string
+  cliente_nome?: string            // opcional — se não vier, fica em branco (o WinMax4 tem o nome)
   tipo_documento: string
   artigo_ref: string
   quantidade: number
@@ -28,7 +28,7 @@ function lerExcel(caminho: string): Fatura[] {
   if (!linhasRaw.length) throw new Error('Ficheiro sem dados')
 
   // Valida colunas obrigatórias
-  const obrigatorias = ['fatura_id', 'cliente_codigo', 'cliente_nome', 'tipo_documento', 'artigo_ref', 'quantidade', 'preco_unitario']
+  const obrigatorias = ['fatura_id', 'cliente_codigo', 'tipo_documento', 'artigo_ref', 'quantidade', 'preco_unitario']
   for (const col of obrigatorias) {
     if (!(col in linhasRaw[0])) throw new Error(`Coluna obrigatória em falta: "${col}"`)
   }
@@ -53,7 +53,7 @@ function lerExcel(caminho: string): Fatura[] {
       mapa.set(faturaId, {
         fatura_id:      faturaId,
         cliente_codigo: String(raw.cliente_codigo).trim(),
-        cliente_nome:   String(raw.cliente_nome).trim(),
+        cliente_nome:   raw.cliente_nome ? String(raw.cliente_nome).trim() : '',
         tipo_documento: String(raw.tipo_documento).trim().toUpperCase(),
         linhas: [],
       })

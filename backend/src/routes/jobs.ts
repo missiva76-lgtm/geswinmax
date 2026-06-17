@@ -59,7 +59,7 @@ router.post('/sync', async (_req: Request, res: Response) => {
     progresso: 0, log: [],
     criado_em: admin.firestore.FieldValue.serverTimestamp(),
   })
-  syncWinmax()
+  syncWinmax(jobId)
     .then(() => updateJob(jobId, { estado: 'concluido', progresso: 100 }))
     .catch(async (e) => updateJob(jobId, { estado: 'erro', erro_geral: String(e) }))
   res.json({ jobId, mensagem: 'Sync iniciada' })

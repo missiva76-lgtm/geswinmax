@@ -80,7 +80,7 @@ export default function Emissao() {
               {[
                 { col: 'fatura_id',      obrig: true,  desc: 'Identifica o documento (ex: F1, F2, F3...)' },
                 { col: 'cliente_codigo', obrig: true,  desc: 'Nº cliente WinMax4' },
-                { col: 'cliente_nome',   obrig: true,  desc: 'Nome (para relatório)' },
+                { col: 'cliente_nome',   obrig: false, desc: 'Nome (opcional — vem do WinMax4)' },
                 { col: 'tipo_documento', obrig: true,  desc: 'FAA, FR, FS, FTB, NCC, GT' },
                 { col: 'artigo_ref',     obrig: true,  desc: 'Ref. artigo WinMax4' },
                 { col: 'quantidade',     obrig: true,  desc: 'Qtd.' },

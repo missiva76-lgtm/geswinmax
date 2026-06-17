@@ -1,6 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Save, Eye, EyeOff } from 'lucide-react'
+import { Save, Eye, EyeOff, Plus, Trash2, Pencil, Check, X } from 'lucide-react'
 import { getConfig, saveConfig } from '../services/api'
+
+const API = import.meta.env.VITE_API_URL || '/api'
+
+interface TipoDoc {
+  codigo: string
+  descricao: string
+  valor: string
+}
 
 export default function Configuracoes() {
   const [config, setConfig] = useState({
@@ -14,17 +22,46 @@ export default function Configuracoes() {
     sync_data_fim: '',
     sync_hora: '02:00',
   })
-  const [saved, setSaved] = useState(false)
+  const [tipos, setTipos]   = useState<TipoDoc[]>([])
+  const [saved, setSaved]   = useState(false)
   const [showPass, setShowPass] = useState(false)
+  const [editIdx, setEditIdx]   = useState<number | null>(null)
+  const [novoTipo, setNovoTipo] = useState<TipoDoc>({ codigo: '', descricao: '', valor: '' })
+  const [adicionando, setAdicionando] = useState(false)
 
   useEffect(() => {
-    getConfig().then(c => setConfig(prev => ({ ...prev, ...c }))).catch(() => {})
+    getConfig().then(c => {
+      setConfig(prev => ({ ...prev, ...c }))
+      if (c.tipos_documento) setTipos(c.tipos_documento)
+      else setTipos([
+        { codigo: 'FAA', descricao: 'Fatura a Clientes',   valor: '37' },
+        { codigo: 'FR',  descricao: 'Fatura Recibo',       valor: '55' },
+        { codigo: 'FS',  descricao: 'Fatura Simplificada', valor: '46' },
+        { codigo: 'FTB', descricao: 'Fat Recibo B',        valor: '45' },
+        { codigo: 'NCC', descricao: 'Nota de Crédito',     valor: '40' },
+        { codigo: 'GT',  descricao: 'Guia de Transporte',  valor: '49' },
+      ])
+    }).catch(() => {})
   }, [])
 
   const handleSave = async () => {
-    await saveConfig(config)
+    await saveConfig({ ...config, tipos_documento: tipos as any })
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
+  }
+
+  const eliminarTipo = (idx: number) => setTipos(t => t.filter((_, i) => i !== idx))
+
+  const guardarEdicao = (idx: number, novo: TipoDoc) => {
+    setTipos(t => t.map((item, i) => i === idx ? novo : item))
+    setEditIdx(null)
+  }
+
+  const adicionarTipo = () => {
+    if (!novoTipo.codigo || !novoTipo.valor) return
+    setTipos(t => [...t, novoTipo])
+    setNovoTipo({ codigo: '', descricao: '', valor: '' })
+    setAdicionando(false)
   }
 
   const Campo = ({ label, field, type = 'text', placeholder = '' }: {
@@ -40,7 +77,7 @@ export default function Configuracoes() {
           value={(config as any)[field] || ''}
           onChange={e => setConfig(c => ({ ...c, [field]: e.target.value }))}/>
         {field === 'password' && (
-          <button onClick={() => setShowPass(!showPass)}
+          <button type="button" onClick={() => setShowPass(!showPass)}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400">
             {showPass ? <EyeOff size={14}/> : <Eye size={14}/>}
           </button>
@@ -52,8 +89,8 @@ export default function Configuracoes() {
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-900 mb-6">Configurações</h2>
-
       <div className="space-y-6">
+
         {/* WinMax4 */}
         <div className="bg-white border border-gray-100 rounded-xl p-5">
           <p className="text-sm font-medium text-gray-700 mb-4">Ligação WinMax4</p>
@@ -75,11 +112,66 @@ export default function Configuracoes() {
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none"
                 value={config.tipo_documento_default}
                 onChange={e => setConfig(c => ({ ...c, tipo_documento_default: e.target.value }))}>
-                {['FAA','FR','FS','FTB','NCC','GT'].map(t => <option key={t}>{t}</option>)}
+                {tipos.map(t => <option key={t.codigo} value={t.codigo}>{t.codigo} — {t.descricao}</option>)}
               </select>
             </div>
-            <Campo label="Template PDF (ficheiro .rpx)" field="template_pdf"/>
+            <Campo label="Template PDF (.rpx)" field="template_pdf"/>
           </div>
+        </div>
+
+        {/* Tipos de Documento */}
+        <div className="bg-white border border-gray-100 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm font-medium text-gray-700">Tipos de documento</p>
+            <button onClick={() => setAdicionando(true)}
+              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700">
+              <Plus size={13}/> Adicionar
+            </button>
+          </div>
+
+          <div className="space-y-1">
+            {tipos.map((t, idx) => (
+              <div key={idx} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-100 bg-gray-50">
+                {editIdx === idx ? (
+                  <>
+                    <input className="w-16 px-2 py-1 text-xs border border-gray-200 rounded"
+                      value={t.codigo} onChange={e => setTipos(ts => ts.map((x, i) => i === idx ? { ...x, codigo: e.target.value } : x))}/>
+                    <input className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded"
+                      value={t.descricao} onChange={e => setTipos(ts => ts.map((x, i) => i === idx ? { ...x, descricao: e.target.value } : x))}/>
+                    <input className="w-16 px-2 py-1 text-xs border border-gray-200 rounded"
+                      value={t.valor} placeholder="valor WinMax" onChange={e => setTipos(ts => ts.map((x, i) => i === idx ? { ...x, valor: e.target.value } : x))}/>
+                    <button onClick={() => setEditIdx(null)} className="text-green-600"><Check size={13}/></button>
+                    <button onClick={() => setEditIdx(null)} className="text-gray-400"><X size={13}/></button>
+                  </>
+                ) : (
+                  <>
+                    <span className="w-12 text-xs font-mono font-medium text-gray-700">{t.codigo}</span>
+                    <span className="flex-1 text-xs text-gray-600">{t.descricao}</span>
+                    <span className="text-xs text-gray-400 font-mono">val:{t.valor}</span>
+                    <button onClick={() => setEditIdx(idx)} className="text-gray-400 hover:text-blue-600"><Pencil size={12}/></button>
+                    <button onClick={() => eliminarTipo(idx)} className="text-gray-400 hover:text-red-500"><Trash2 size={12}/></button>
+                  </>
+                )}
+              </div>
+            ))}
+
+            {adicionando && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-blue-200 bg-blue-50">
+                <input className="w-16 px-2 py-1 text-xs border border-gray-200 rounded"
+                  placeholder="Código" value={novoTipo.codigo}
+                  onChange={e => setNovoTipo(n => ({ ...n, codigo: e.target.value.toUpperCase() }))}/>
+                <input className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded"
+                  placeholder="Descrição" value={novoTipo.descricao}
+                  onChange={e => setNovoTipo(n => ({ ...n, descricao: e.target.value }))}/>
+                <input className="w-20 px-2 py-1 text-xs border border-gray-200 rounded"
+                  placeholder="Val. WinMax" value={novoTipo.valor}
+                  onChange={e => setNovoTipo(n => ({ ...n, valor: e.target.value }))}/>
+                <button onClick={adicionarTipo} className="text-green-600"><Check size={13}/></button>
+                <button onClick={() => setAdicionando(false)} className="text-gray-400"><X size={13}/></button>
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">O "Val. WinMax" é o valor interno do WinMax4 para este tipo de documento.</p>
         </div>
 
         {/* Sync */}
@@ -90,9 +182,6 @@ export default function Configuracoes() {
             <Campo label="Data de fim (vazio = hoje)" field="sync_data_fim" placeholder="DD-MM-YYYY"/>
             <Campo label="Hora da sync diária" field="sync_hora" placeholder="02:00"/>
           </div>
-          <p className="text-xs text-gray-400 mt-3">
-            A sync importa artigos, existências e movimentos de venda/compra do WinMax4 para esta app.
-          </p>
         </div>
       </div>
 
