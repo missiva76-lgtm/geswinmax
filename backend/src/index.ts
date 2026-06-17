@@ -1,6 +1,6 @@
 import 'dotenv/config'
-import * as express from 'express'
-import * as cors from 'cors'
+import express from 'express'
+import cors from 'cors'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as cron from 'node-cron'
@@ -22,9 +22,6 @@ const app = express()
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }))
 app.use(express.json({ limit: '10mb' }))
 
-// ─── Servir PDFs estaticamente ──────────────────────────────────────────────
-// Os PDFs ficam em /pdfs/{jobId}/{nomeFicheiro}.pdf
-// Acessíveis em GET /api/pdfs/{jobId}/{nomeFicheiro}.pdf
 app.use('/api/pdfs', express.static(path.join(process.cwd(), 'pdfs'), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.pdf')) {
@@ -34,8 +31,7 @@ app.use('/api/pdfs', express.static(path.join(process.cwd(), 'pdfs'), {
   }
 }))
 
-// Health check
-app.get('/health', (_req, res) => res.json({
+app.get('/health', (_req: express.Request, res: express.Response) => res.json({
   status: 'ok', versao: '1.0.0', app: 'GesWinmax Backend',
   timestamp: new Date().toISOString(),
 }))

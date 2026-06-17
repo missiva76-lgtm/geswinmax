@@ -2,31 +2,36 @@
   "name": "geswinmax-backend",
   "version": "1.0.0",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
   "scripts": {
     "dev": "ts-node-dev --respawn src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
-    "express": "^4.19.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "playwright": "^1.44.0",
-    "xlsx": "^0.18.5",
+    "express": "^4.19.2",
     "firebase-admin": "^12.1.0",
     "multer": "^1.4.5-lts.1",
-    "winston": "^3.13.0",
     "node-cron": "^3.0.3",
-    "uuid": "^10.0.0"
+    "playwright": "^1.44.0",
+    "uuid": "^10.0.0",
+    "winston": "^3.13.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "typescript": "^5.4.5",
-    "@types/express": "^4.17.21",
     "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
     "@types/multer": "^1.4.11",
     "@types/node": "^20.12.12",
     "@types/node-cron": "^3.0.11",
     "@types/uuid": "^10.0.0",
-    "ts-node-dev": "^2.0.0"
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.5"
   }
 }
