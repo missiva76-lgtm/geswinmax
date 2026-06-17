@@ -32,8 +32,8 @@ export default function Emissao() {
   }
 
   const faturas: FaturaResultado[] = job?.resultado?.faturas || []
-  const emitidas  = faturas.filter(f => f.sucesso)
-  const comErro   = faturas.filter(f => !f.sucesso)
+  const emitidas = faturas.filter(f => f.sucesso)
+  const comErro  = faturas.filter(f => !f.sucesso)
 
   return (
     <div>
@@ -59,12 +59,17 @@ export default function Emissao() {
 
           {erro && <p className="mt-3 text-sm text-red-600">{erro}</p>}
 
-          {/* Template Excel */}
-          <div className="mt-4 flex items-center gap-2">
-            <FileSpreadsheet size={14} className="text-gray-400"/>
+          <div className="mt-4 flex items-center gap-3">
+            <FileSpreadsheet size={14} className="text-gray-400 shrink-0"/>
+            <span className="text-xs text-gray-400">Templates:</span>
             <a href="/template-faturas.xlsx" download
               className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-              Descarregar template Excel <Download size={11}/>
+              <Download size={11}/> Excel (.xlsx)
+            </a>
+            <span className="text-gray-200">|</span>
+            <a href="/template-faturas.csv" download
+              className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+              <Download size={11}/> CSV (.csv)
             </a>
           </div>
 
@@ -73,23 +78,46 @@ export default function Emissao() {
             <p className="text-xs font-medium text-gray-500 mb-3 uppercase tracking-wide">Colunas do Excel</p>
             <div className="grid grid-cols-2 gap-1.5 text-xs">
               {[
+                { col: 'fatura_id',      obrig: true,  desc: 'Identifica o documento (ex: F1, F2, F3...)' },
                 { col: 'cliente_codigo', obrig: true,  desc: 'Nº cliente WinMax4' },
                 { col: 'cliente_nome',   obrig: true,  desc: 'Nome (para relatório)' },
-                { col: 'tipo_documento', obrig: true,  desc: 'FAA, FR, FS...' },
+                { col: 'tipo_documento', obrig: true,  desc: 'FAA, FR, FS, FTB, NCC, GT' },
                 { col: 'artigo_ref',     obrig: true,  desc: 'Ref. artigo WinMax4' },
                 { col: 'quantidade',     obrig: true,  desc: 'Qtd.' },
                 { col: 'preco_unitario', obrig: true,  desc: 'Preço sem IVA' },
                 { col: 'desconto_pct',   obrig: false, desc: 'Desconto %' },
-                { col: 'comentario',     obrig: false, desc: 'Descrição suplementar' },
+                { col: 'comentario',     obrig: false, desc: 'Texto adicional na linha' },
               ].map(({ col, obrig, desc }) => (
                 <div key={col} className="flex items-start gap-1.5 py-1 border-b border-gray-50">
                   <code className="bg-gray-50 px-1.5 py-0.5 rounded text-gray-700 shrink-0">{col}</code>
-                  <span className="text-gray-400 shrink-0">{obrig ? '✅' : '❌'}</span>
+                  <span className="text-gray-400 shrink-0">{obrig ? '✅' : '⬜'}</span>
                   <span className="text-gray-500">{desc}</span>
                 </div>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-2">Descrição e IVA do artigo vêm automaticamente da ficha do WinMax4.</p>
+
+            {/* Exemplo */}
+            <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+              <p className="text-xs font-medium text-blue-700 mb-2">Exemplo — mesmo cliente, 2 faturas separadas:</p>
+              <table className="text-xs w-full">
+                <thead>
+                  <tr className="text-blue-600">
+                    <th className="text-left pr-3">fatura_id</th>
+                    <th className="text-left pr-3">cliente_codigo</th>
+                    <th className="text-left pr-3">tipo_documento</th>
+                    <th className="text-left">artigo_ref</th>
+                  </tr>
+                </thead>
+                <tbody className="text-blue-800 font-mono">
+                  <tr><td className="pr-3">F1</td><td className="pr-3">82</td><td className="pr-3">FAA</td><td>SERV REB</td></tr>
+                  <tr><td className="pr-3">F1</td><td className="pr-3">82</td><td className="pr-3">FAA</td><td>SERV MEC</td></tr>
+                  <tr className="text-orange-700"><td className="pr-3">F2</td><td className="pr-3">82</td><td className="pr-3">FAA</td><td>PECAS</td></tr>
+                  <tr><td className="pr-3">F3</td><td className="pr-3">100</td><td className="pr-3">FR</td><td>SERV ADM</td></tr>
+                </tbody>
+              </table>
+              <p className="text-xs text-blue-600 mt-2">F1 e F2 são do mesmo cliente mas emitidas como documentos separados. F3 é outro cliente.</p>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">Descrição e IVA vêm automaticamente da ficha do artigo no WinMax4.</p>
           </div>
         </>
       )}
@@ -97,12 +125,11 @@ export default function Emissao() {
       {/* Estado do Job em tempo real */}
       {job && (
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-          {/* Cabeçalho do job */}
           <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              {job.estado === 'ativo' && <Loader2 size={16} className="text-blue-500 animate-spin"/>}
+              {job.estado === 'ativo'     && <Loader2     size={16} className="text-blue-500 animate-spin"/>}
               {job.estado === 'concluido' && <CheckCircle size={16} className="text-green-500"/>}
-              {job.estado === 'erro' && <XCircle size={16} className="text-red-500"/>}
+              {job.estado === 'erro'      && <XCircle     size={16} className="text-red-500"/>}
               <span className="text-sm font-medium text-gray-900 capitalize">{job.estado}</span>
             </div>
             <button onClick={() => setJobId(null)}
@@ -112,12 +139,10 @@ export default function Emissao() {
           {/* Barra de progresso */}
           <div className="px-5 py-3 border-b border-gray-50">
             <div className="flex items-center justify-between text-xs text-gray-500 mb-1.5">
-              <span>Progresso</span>
-              <span>{job.progresso}%</span>
+              <span>Progresso</span><span>{job.progresso}%</span>
             </div>
             <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-blue-500 rounded-full transition-all duration-500"
+              <div className="h-full bg-blue-500 rounded-full transition-all duration-500"
                 style={{ width: `${job.progresso}%` }}/>
             </div>
             {job.resultado && (
@@ -129,22 +154,22 @@ export default function Emissao() {
             )}
           </div>
 
-          {/* Log em tempo real */}
+          {/* Log */}
           <div className="px-5 py-3 border-b border-gray-50">
             <p className="text-xs font-medium text-gray-500 mb-2">Log</p>
             <div className="bg-gray-900 rounded-lg p-3 h-32 overflow-y-auto font-mono text-xs">
               {job.log.slice(-20).map((linha, i) => (
-                <div key={i} className={`
-                  ${linha.includes('❌') ? 'text-red-400' :
-                    linha.includes('✅') ? 'text-green-400' :
-                    linha.includes('⚠️') ? 'text-yellow-400' : 'text-gray-300'}`}>
+                <div key={i} className={
+                  linha.includes('❌') ? 'text-red-400' :
+                  linha.includes('✅') ? 'text-green-400' :
+                  linha.includes('⚠️') ? 'text-yellow-400' : 'text-gray-300'}>
                   {linha}
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Resultados por fatura */}
+          {/* Resultados */}
           {faturas.length > 0 && (
             <div className="px-5 py-4">
               <p className="text-xs font-medium text-gray-500 mb-3">Documentos processados</p>
@@ -155,6 +180,7 @@ export default function Emissao() {
                     <div className="flex-1 min-w-0">
                       <span className="font-medium text-gray-800">{f.numero_documento}</span>
                       <span className="text-gray-400 ml-2 text-xs">{f.cliente_nome}</span>
+                      <span className="text-gray-300 ml-1 text-xs">({f.fatura_id})</span>
                     </div>
                     {f.pdf_url && (
                       <a href={f.pdf_url} target="_blank" rel="noreferrer"
@@ -169,7 +195,7 @@ export default function Emissao() {
                     <XCircle size={14} className="text-red-500 shrink-0 mt-0.5"/>
                     <div className="min-w-0">
                       <span className="font-medium text-gray-800">{f.cliente_nome}</span>
-                      <span className="text-xs text-gray-400 ml-2">({f.tipo_documento})</span>
+                      <span className="text-xs text-gray-400 ml-2">({f.fatura_id} · {f.tipo_documento})</span>
                       <p className="text-xs text-red-500 mt-0.5 truncate">{f.erro}</p>
                       {f.erros_linhas?.map((e, j) => (
                         <p key={j} className="text-xs text-red-400 mt-0.5">

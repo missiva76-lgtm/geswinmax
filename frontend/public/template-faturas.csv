@@ -1,0 +1,5 @@
+fatura_id,cliente_codigo,cliente_nome,tipo_documento,artigo_ref,quantidade,preco_unitario,desconto_pct,comentario
+F1,82,PRESTIMA SL Sucursal,FAA,SERV REB,1,150.00,0,MARCA: Toyota
+F1,82,PRESTIMA SL Sucursal,FAA,SERV MEC,2,80.00,0,
+F2,82,PRESTIMA SL Sucursal,FAA,PECAS,3,45.00,5,
+F3,100,Cliente Teste Lda,FR,SERV ADM,1,200.00,0,

@@ -15,6 +15,7 @@ export interface Job {
 
 export interface FaturaResultado {
   index: number
+  fatura_id: string
   cliente_codigo: string
   cliente_nome: string
   tipo_documento: string

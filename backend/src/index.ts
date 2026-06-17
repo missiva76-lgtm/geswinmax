@@ -7,12 +7,17 @@ import * as cron from 'node-cron'
 import { initFirebase, getConfig } from './services/firebase'
 import { logger } from './services/logger'
 import { syncWinmax } from './sync/syncArtigos'
+import { syncArquivoDigital } from './sync/syncArquivoDigital'
+import { syncSAFT } from './sync/syncSAFT'
 import jobsRouter    from './routes/jobs'
 import artigosRouter from './routes/artigos'
 import faturasRouter from './routes/faturas'
 import configRouter  from './routes/config'
+import arquivoRouter from './routes/arquivo'
+import saftRouter    from './routes/saft'
+import dadosRouter    from './routes/dados'
 
-for (const dir of ['logs', 'tmp/uploads', 'pdfs']) {
+for (const dir of ['logs', 'tmp/uploads', 'pdfs', 'pdfs/arquivo', 'saft']) {
   fs.mkdirSync(path.join(process.cwd(), dir), { recursive: true })
 }
 
@@ -22,6 +27,7 @@ const app = express()
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }))
 app.use(express.json({ limit: '10mb' }))
 
+// PDFs estáticos (emissão + arquivo)
 app.use('/api/pdfs', express.static(path.join(process.cwd(), 'pdfs'), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.pdf')) {
@@ -40,16 +46,42 @@ app.use('/api/jobs',    jobsRouter)
 app.use('/api/artigos', artigosRouter)
 app.use('/api/faturas', faturasRouter)
 app.use('/api/config',  configRouter)
+app.use('/api/arquivo', arquivoRouter)
+app.use('/api/dados',   dadosRouter)
+app.use('/api/saft',    saftRouter)
 
 async function agendarSync() {
   const config = await getConfig()
   const hora = config.sync_hora || '02:00'
   const [h, m] = hora.split(':')
+
+  // Sync de artigos/movimentos diária
   cron.schedule(`${m} ${h} * * *`, async () => {
     logger.info(`⏰ Sync automática (${hora})`)
     await syncWinmax()
   }, { timezone: 'Europe/Lisbon' })
-  logger.info(`⏰ Sync agendada para as ${hora}`)
+
+  // Sync do arquivo digital — diária 30 min depois
+  const hArq = String(Number(h)).padStart(2, '0')
+  const mArq = String((Number(m) + 30) % 60).padStart(2, '0')
+  cron.schedule(`${mArq} ${hArq} * * *`, async () => {
+    logger.info(`⏰ Sync Arquivo Digital (${hArq}:${mArq})`)
+    await syncArquivoDigital()
+  }, { timezone: 'Europe/Lisbon' })
+
+  logger.info(`⏰ Sync artigos: ${hora} | Arquivo digital: ${hArq}:${mArq}`)
+
+  // SAF-T: dia 1 de cada mês às 03:30 — importa o mês anterior
+  cron.schedule('30 3 1 * *', async () => {
+    const hoje = new Date()
+    const mesAnterior = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)
+    const ultimoDia   = new Date(hoje.getFullYear(), hoje.getMonth(), 0)
+    const di = `01/${String(mesAnterior.getMonth()+1).padStart(2,'0')}/${mesAnterior.getFullYear()}`
+    const df = `${String(ultimoDia.getDate()).padStart(2,'0')}/${String(ultimoDia.getMonth()+1).padStart(2,'0')}/${ultimoDia.getFullYear()}`
+    logger.info(`⏰ Sync SAF-T automática: ${di} → ${df}`)
+    await syncSAFT(di, df)
+  }, { timezone: 'Europe/Lisbon' })
+  logger.info('⏰ SAF-T mensal: dia 1 de cada mês às 03:30')
 }
 
 const PORT = Number(process.env.PORT) || 3001

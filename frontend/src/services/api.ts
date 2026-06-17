@@ -50,3 +50,16 @@ export async function saveConfig(data: Record<string, string>) {
   })
   return res.json()
 }
+
+export async function getArquivo(q?: string) {
+  const url = q
+    ? `${API}/arquivo/pesquisar?q=${encodeURIComponent(q)}`
+    : `${API}/arquivo`
+  const res = await fetch(url)
+  return res.json()
+}
+
+export async function triggerSyncArquivo(): Promise<{ jobId: string }> {
+  const res = await fetch(`${API}/arquivo/sync`, { method: 'POST' })
+  return res.json()
+}

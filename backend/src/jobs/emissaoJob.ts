@@ -1,4 +1,4 @@
-// jobs/emissaoJob.ts — PDFs guardados em /pdfs/ e servidos pelo Express
+// jobs/emissaoJob.ts
 import * as XLSX from 'xlsx'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -9,6 +9,7 @@ import { Fatura, LinhaFatura } from '../types'
 import { logger } from '../services/logger'
 
 interface LinhaRaw {
+  fatura_id: string | number       // agrupa linhas na mesma fatura
   cliente_codigo: string | number
   cliente_nome: string
   tipo_documento: string
@@ -23,12 +24,23 @@ function lerExcel(caminho: string): Fatura[] {
   const wb = XLSX.readFile(caminho)
   const ws = wb.Sheets[wb.SheetNames[0]]
   const linhasRaw = XLSX.utils.sheet_to_json<LinhaRaw>(ws, { raw: true })
+
+  if (!linhasRaw.length) throw new Error('Ficheiro sem dados')
+
+  // Valida colunas obrigatórias
+  const obrigatorias = ['fatura_id', 'cliente_codigo', 'cliente_nome', 'tipo_documento', 'artigo_ref', 'quantidade', 'preco_unitario']
+  for (const col of obrigatorias) {
+    if (!(col in linhasRaw[0])) throw new Error(`Coluna obrigatória em falta: "${col}"`)
+  }
+
+  // Agrupa por fatura_id — cada fatura_id único = um documento separado
+  // Preserva a ordem de inserção (Map mantém ordem)
   const mapa = new Map<string, Fatura>()
 
   for (const raw of linhasRaw) {
-    const codigo  = String(raw.cliente_codigo).trim()
-    const tipoDoc = String(raw.tipo_documento).trim().toUpperCase()
-    const chave   = `${codigo}__${tipoDoc}`
+    const faturaId = String(raw.fatura_id).trim()
+    if (!faturaId) throw new Error(`fatura_id vazio na linha com artigo "${raw.artigo_ref}"`)
+
     const linha: LinhaFatura = {
       artigo_ref:     String(raw.artigo_ref).trim().toUpperCase(),
       quantidade:     Number(raw.quantidade),
@@ -36,17 +48,25 @@ function lerExcel(caminho: string): Fatura[] {
       desconto_pct:   Number(raw.desconto_pct ?? 0),
       comentario:     raw.comentario?.toString().trim() || '',
     }
-    if (!mapa.has(chave)) {
-      mapa.set(chave, {
-        cliente_codigo: codigo,
+
+    if (!mapa.has(faturaId)) {
+      mapa.set(faturaId, {
+        fatura_id:      faturaId,
+        cliente_codigo: String(raw.cliente_codigo).trim(),
         cliente_nome:   String(raw.cliente_nome).trim(),
-        tipo_documento: tipoDoc,
+        tipo_documento: String(raw.tipo_documento).trim().toUpperCase(),
         linhas: [],
       })
     }
-    mapa.get(chave)!.linhas.push(linha)
+    mapa.get(faturaId)!.linhas.push(linha)
   }
-  return Array.from(mapa.values())
+
+  const faturas = Array.from(mapa.values())
+  logger.info(`📂 ${linhasRaw.length} linha(s) → ${faturas.length} fatura(s):`)
+  faturas.forEach((f, i) =>
+    logger.info(`   [${i+1}] ${f.fatura_id} | ${f.cliente_nome} (${f.cliente_codigo}) | ${f.tipo_documento} | ${f.linhas.length} linha(s)`)
+  )
+  return faturas
 }
 
 export async function processarEmissaoJob(jobId: string, excelLocalPath: string): Promise<void> {
@@ -61,7 +81,6 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
 
     const config = await getConfig()
 
-    // PDFs guardados em /pdfs/{jobId}/ — servidos pelo Express em /api/pdfs/
     const pastaBase = path.join(process.cwd(), 'pdfs')
     const pastaPDFs = path.join(pastaBase, jobId)
     fs.mkdirSync(pastaPDFs, { recursive: true })
@@ -84,16 +103,15 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
     const resultados = await rpa.processarFaturas(faturas, async (pct, resultado) => {
       await updateJob(jobId, { progresso: pct })
 
-      // URL pública do PDF servida pelo próprio Render
       let pdfUrl: string | null = null
       if (resultado.sucesso && resultado.pdf_url && fs.existsSync(resultado.pdf_url)) {
         const nomeFicheiro = path.basename(resultado.pdf_url)
         pdfUrl = `${backendUrl}/api/pdfs/${jobId}/${encodeURIComponent(nomeFicheiro)}`
       }
 
-      const faturaRef = db().collection('faturas').doc()
-      await faturaRef.set({
+      await db().collection('faturas').doc().set({
         job_id:           jobId,
+        fatura_id:        resultado.fatura_id,
         cliente_codigo:   resultado.cliente_codigo,
         cliente_nome:     resultado.cliente_nome,
         tipo_documento:   resultado.tipo_documento,
@@ -116,8 +134,8 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
     const nok = resultados.length - ok
 
     await updateJob(jobId, {
-      estado:             nok > 0 ? (ok > 0 ? 'concluido' : 'erro') : 'concluido',
-      progresso:          100,
+      estado:               nok > 0 ? (ok > 0 ? 'concluido' : 'erro') : 'concluido',
+      progresso:            100,
       'resultado.total':    faturas.length,
       'resultado.emitidas': ok,
       'resultado.erros':    nok,

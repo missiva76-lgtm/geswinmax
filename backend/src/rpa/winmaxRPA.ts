@@ -363,7 +363,7 @@ export class WinmaxRPA {
           await this.log('  ⛔ A abandonar documento')
           await this.abandonarDocumento()
           return {
-            index: 0, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
+            index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
             tipo_documento: fatura.tipo_documento, sucesso: false,
             total_linhas: fatura.linhas.length, linhas_ok: i,
             erros_linhas: errosLinhas, erro: err.message, duracao_ms: Date.now() - inicio,
@@ -375,7 +375,7 @@ export class WinmaxRPA {
 
     const { numDoc, localPDF } = await this.terminarDocumento(fatura)
     return {
-      index: 0, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
+      index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
       tipo_documento: fatura.tipo_documento, sucesso: true,
       numero_documento: numDoc,
       pdf_url: localPDF,   // substituído por URL Firebase Storage no job handler
@@ -403,7 +403,7 @@ export class WinmaxRPA {
         const msg = err instanceof Error ? err.message : String(err)
         await this.page?.screenshot({ path: `logs/erro-${i+1}.png` }).catch(() => {})
         resultado = {
-          index: i+1, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
+          index: i+1, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
           tipo_documento: fatura.tipo_documento, sucesso: false,
           total_linhas: fatura.linhas.length, linhas_ok: 0, erro: msg,
         }

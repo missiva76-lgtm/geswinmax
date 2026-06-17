@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { FileSpreadsheet, LayoutDashboard, Package, Archive, Settings, LogOut, Menu, X } from 'lucide-react'
+import { FileSpreadsheet, LayoutDashboard, Package, Archive, Settings, LogOut, Menu, X, BarChart2 } from 'lucide-react'
 import { auth, signOut } from '../../services/firebase'
 
 const nav = [
@@ -8,6 +8,7 @@ const nav = [
   { to: '/emissao',      icon: FileSpreadsheet,  label: 'Emissão' },
   { to: '/dados',        icon: Package,          label: 'Dados WinMax4' },
   { to: '/arquivo',      icon: Archive,          label: 'Arquivo digital' },
+  { to: '/saft',         icon: BarChart2,         label: 'SAF-T' },
   { to: '/configuracoes',icon: Settings,         label: 'Configurações' },
 ]
 

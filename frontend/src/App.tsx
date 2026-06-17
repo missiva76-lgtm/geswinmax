@@ -7,6 +7,7 @@ import Emissao from './pages/Emissao'
 import Dados from './pages/Dados'
 import Arquivo from './pages/Arquivo'
 import Configuracoes from './pages/Configuracoes'
+import SAFTDashboard from './pages/SAFTDashboard'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/dados"          element={<PrivateRoute><Dados/></PrivateRoute>}/>
         <Route path="/arquivo"        element={<PrivateRoute><Arquivo/></PrivateRoute>}/>
         <Route path="/configuracoes"  element={<PrivateRoute><Configuracoes/></PrivateRoute>}/>
+        <Route path="/saft"           element={<PrivateRoute><SAFTDashboard/></PrivateRoute>}/>
         <Route path="*" element={<Navigate to="/" replace/>}/>
       </Routes>
     </BrowserRouter>
