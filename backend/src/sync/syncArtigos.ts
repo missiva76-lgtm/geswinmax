@@ -103,6 +103,13 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
     const url = `https://app102.winmax4.com/Default.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
     await page.goto(url, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(1500)
+    if (page.url().includes('MainPage')) {
+      await page.goto(url + '&Logout=1', { waitUntil: 'networkidle' })
+      await page.waitForTimeout(1000)
+      await page.goto(url, { waitUntil: 'networkidle' })
+      await page.waitForTimeout(1000)
+    }
     await page.fill('#txtUserCode', config.utilizador || '')
     await page.fill('#txtPassword', config.password   || '')
     await page.click('#btnLogin')

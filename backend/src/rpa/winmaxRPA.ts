@@ -94,10 +94,35 @@ export class WinmaxRPA {
     const url = `https://app102.winmax4.com/Default.aspx?CompanyCode=${this.config.companyCode}`
     await this.log(`🔑 Login: ${url}`)
     await this.page!.goto(url, { waitUntil: 'networkidle' })
+    await this.page!.waitForTimeout(1500)
+
+    const currentUrl = this.page!.url()
+    await this.log(`  URL actual: ${currentUrl}`)
+
+    // Se já está no MainPage (sessão activa), faz logout primeiro
+    if (currentUrl.includes('MainPage')) {
+      await this.log('  Sessão activa detectada — a fazer logout...')
+      await this.page!.goto(
+        `https://app102.winmax4.com/Default.aspx?CompanyCode=${this.config.companyCode}&Logout=1`,
+        { waitUntil: 'networkidle' }
+      )
+      await this.page!.waitForTimeout(1000)
+    }
+
+    // Verifica se está na página de login
+    const temLogin = await this.page!.locator(SEL.loginUser).isVisible().catch(() => false)
+    if (!temLogin) {
+      // Tenta navegar directamente para o login
+      await this.page!.goto(url, { waitUntil: 'networkidle' })
+      await this.page!.waitForTimeout(1500)
+    }
+
     await this.page!.fill(SEL.loginUser, this.config.utilizador)
     await this.page!.fill(SEL.loginPass, this.config.password)
     await this.page!.click(SEL.loginBtn)
     await this.page!.waitForLoadState('networkidle')
+    await this.page!.waitForTimeout(1000)
+
     if (!await this.page!.locator('text=Movimentação').isVisible().catch(() => false)) {
       await this.page!.screenshot({ path: 'logs/erro-login.png' })
       throw new Error('Login falhou')
