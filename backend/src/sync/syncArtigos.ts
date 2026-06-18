@@ -78,23 +78,17 @@ async function exportarCSV(
     await page.waitForTimeout(300)
   }
 
-  // Muda "Enviar para" para "Ficheiro" via postback ASP.NET
-  await page.evaluate(() => {
-    const ddl = document.getElementById('ddlSendTo') as HTMLSelectElement
-    if (!ddl) return
-    ddl.selectedIndex = 1  // Ficheiro
-    if (typeof (window as any).__doPostBack === 'function') {
-      ;(window as any).__doPostBack('ddlSendTo', '')
-    }
-  })
-  await page.waitForTimeout(1500)
+  // Muda "Enviar para" para "Ficheiro" usando selectOption do Playwright
+  try {
+    await page.selectOption('#ddlSendTo', '1')  // Ficheiro
+    await page.waitForTimeout(1500)  // Aguarda o postback ASP.NET
+  } catch { /* campo pode não existir */ }
 
   // Selecciona formato CSV
-  await page.evaluate(() => {
-    const ddlDoc = document.getElementById('ddlDocType') as HTMLSelectElement
-    if (ddlDoc) ddlDoc.value = '3'  // Excel (.csv)
-  })
-  await page.waitForTimeout(300)
+  try {
+    await page.selectOption('#ddlDocType', '3')  // Excel (.csv)
+    await page.waitForTimeout(300)
+  } catch { /* campo pode não existir ainda */ }
 
   // Aguarda o download
   const downloadPromise = page.waitForEvent('download', { timeout: 30000 })
