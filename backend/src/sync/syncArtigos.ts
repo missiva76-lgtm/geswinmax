@@ -25,13 +25,18 @@ async function irParaPaginaToolbox(page: Page, paginaAlvo: number): Promise<void
 }
 
 async function abrirAtalhoEAguardar(page: Page, pag: number, div: number, iframeId: string): Promise<void> {
+  // Aguarda a toolbox estar disponível
+  await page.waitForFunction(
+    () => !!(document.getElementById('Toolbox_content') as HTMLIFrameElement)?.contentDocument?.getElementById('LabelPages'),
+    { timeout: 15000 }
+  )
   await irParaPaginaToolbox(page, pag)
   await page.evaluate((idx: number) => {
     const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
     ;(tb?.contentDocument?.getElementById(`Toolbox_ShortcutIconDiv${idx}`) as HTMLElement)?.click()
   }, div)
-  await page.waitForTimeout(2000)
-  await page.waitForFunction((id: string) => !!document.getElementById(id), iframeId, { timeout: 10000 })
+  await page.waitForTimeout(2500)
+  await page.waitForFunction((id: string) => !!document.getElementById(id), iframeId, { timeout: 20000 })
 }
 
 async function confirmarListagem(page: Page, iframeId: string, di: string, df: string, campoInicio: string, campoFim: string): Promise<void> {
