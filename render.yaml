@@ -5,21 +5,23 @@ services:
     region: frankfurt
     branch: main
     rootDir: backend
-    buildCommand: npm install && npx playwright install chromium --with-deps && npm run build
-    startCommand: npm start
+    buildCommand: npm install && npx playwright install chromium && npm run build
+    startCommand: node dist/index.js
     envVars:
       - key: PORT
         value: 3001
       - key: NODE_ENV
         value: production
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/.cache/ms-playwright
       - key: FIREBASE_PROJECT_ID
         sync: false
       - key: FIREBASE_CLIENT_EMAIL
         sync: false
       - key: FIREBASE_PRIVATE_KEY
         sync: false
-      - key: FIREBASE_STORAGE_BUCKET
-        sync: false
       - key: FRONTEND_URL
+        sync: false
+      - key: BACKEND_URL
         sync: false
     healthCheckPath: /health
