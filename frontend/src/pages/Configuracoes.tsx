@@ -45,7 +45,10 @@ export default function Configuracoes() {
   }, [])
 
   const handleSave = async () => {
-    await saveConfig({ ...config, tipos_documento: tipos as any })
+    // Não envia password se estiver vazia (preserva a password já guardada)
+    const dados: any = { ...config, tipos_documento: tipos }
+    if (!dados.password) delete dados.password
+    await saveConfig(dados)
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
@@ -64,8 +67,12 @@ export default function Configuracoes() {
     setAdicionando(false)
   }
 
+  const handleChange = (field: string, value: string) => {
+    setConfig(prev => ({ ...prev, [field]: value }))
+  }
+
   const Campo = ({ label, field, type = 'text', placeholder = '' }: {
-    label: string; field: keyof typeof config; type?: string; placeholder?: string
+    label: string; field: string; type?: string; placeholder?: string
   }) => (
     <div>
       <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
@@ -74,8 +81,9 @@ export default function Configuracoes() {
           type={field === 'password' && !showPass ? 'password' : type}
           className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-300"
           placeholder={placeholder}
-          value={(config as any)[field] || ''}
-          onChange={e => setConfig(c => ({ ...c, [field]: e.target.value }))}/>
+          value={(config as any)[field] ?? ''}
+          onChange={e => handleChange(field, e.target.value)}
+          autoComplete={field === 'password' ? 'new-password' : 'off'}/>
         {field === 'password' && (
           <button type="button" onClick={() => setShowPass(!showPass)}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400">
@@ -98,7 +106,7 @@ export default function Configuracoes() {
             <Campo label="URL base" field="winmax_url" placeholder="https://app102.winmax4.com"/>
             <Campo label="Company code" field="company_code" placeholder="AUTOAVENIDA"/>
             <Campo label="Utilizador" field="utilizador" placeholder="ADMIN"/>
-            <Campo label="Password" field="password" placeholder="••••••••"/>
+            <Campo label="Password (deixa vazio para manter)" field="password" placeholder="Nova password (opcional)"/>
           </div>
         </div>
 

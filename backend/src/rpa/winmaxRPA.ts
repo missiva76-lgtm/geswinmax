@@ -92,41 +92,48 @@ export class WinmaxRPA {
   async fechar(): Promise<void> { await this.browser?.close() }
 
   async login(): Promise<void> {
-    const url = `https://app102.winmax4.com/Default.aspx?CompanyCode=${this.config.companyCode}`
+    // WinMax4 abre no MainPage.aspx com iframe UserAuthentication_content
+    const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${this.config.companyCode}`
     await this.log(`🔑 Login: ${url}`)
     await this.page!.goto(url, { waitUntil: 'networkidle' })
-    await this.page!.waitForTimeout(1500)
+    await this.page!.waitForTimeout(2000)
 
-    const currentUrl = this.page!.url()
-    await this.log(`  URL actual: ${currentUrl}`)
+    // Aguarda iframe de autenticação
+    await this.page!.waitForFunction(
+      () => !!document.getElementById('UserAuthentication_content'),
+      { timeout: 15000 }
+    )
 
-    // Se já está no MainPage (sessão activa), faz logout primeiro
-    if (currentUrl.includes('MainPage')) {
-      await this.log('  Sessão activa detectada — a fazer logout...')
-      await this.page!.goto(
-        `https://app102.winmax4.com/Default.aspx?CompanyCode=${this.config.companyCode}&Logout=1`,
-        { waitUntil: 'networkidle' }
-      )
-      await this.page!.waitForTimeout(1000)
-    }
+    // Preenche utilizador e password no iframe
+    await this.page!.evaluate(({ user, pass }: { user: string; pass: string }) => {
+      const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      const doc = f?.contentDocument
+      if (!doc) return
+      const u = doc.getElementById('txtUserLogin')    as HTMLInputElement
+      const p = doc.getElementById('txtUserPassword') as HTMLInputElement
+      if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
+      if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
+    }, { user: this.config.utilizador, pass: this.config.password })
+    await this.page!.waitForTimeout(500)
 
-    // Verifica se está na página de login
-    const temLogin = await this.page!.locator(SEL.loginUser).isVisible().catch(() => false)
-    if (!temLogin) {
-      // Tenta navegar directamente para o login
-      await this.page!.goto(url, { waitUntil: 'networkidle' })
-      await this.page!.waitForTimeout(1500)
-    }
-
-    await this.page!.fill(SEL.loginUser, this.config.utilizador)
-    await this.page!.fill(SEL.loginPass, this.config.password)
-    await this.page!.click(SEL.loginBtn)
+    // Clica Confirmar
+    await this.page!.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+    })
     await this.page!.waitForLoadState('networkidle')
-    await this.page!.waitForTimeout(1000)
+    await this.page!.waitForTimeout(2000)
 
-    if (!await this.page!.locator('text=Movimentação').isVisible().catch(() => false)) {
+    // Verifica se o login foi bem sucedido
+    const ok = await this.page!.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      // Se o iframe de autenticação desapareceu = login ok
+      return !f || f.offsetParent === null
+    })
+
+    if (!ok) {
       await this.page!.screenshot({ path: 'logs/erro-login.png' })
-      throw new Error('Login falhou')
+      throw new Error('Login falhou — credenciais incorrectas?')
     }
     await this.log('✅ Login OK')
   }

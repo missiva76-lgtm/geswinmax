@@ -252,19 +252,38 @@ export async function syncSAFT(
     const page = await context.newPage()
 
     // Login
-    const url = `https://app102.winmax4.com/Default.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
+// Login WinMax4
+    // O WinMax4 abre sempre no MainPage com um iframe de autenticação UserAuthentication_content
+    // Campos: txtUserLogin / txtUserPassword — botão: wucButtonConfirm_linkButton1
+    const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
     await page.goto(url, { waitUntil: 'networkidle' })
-    await page.waitForTimeout(1500)
-    if (page.url().includes('MainPage')) {
-      await page.goto(url + '&Logout=1', { waitUntil: 'networkidle' })
-      await page.waitForTimeout(1000)
-      await page.goto(url, { waitUntil: 'networkidle' })
-      await page.waitForTimeout(1000)
-    }
-    await page.fill('#txtUserCode', config.utilizador || '')
-    await page.fill('#txtPassword', config.password   || '')
-    await page.click('#btnLogin')
+    await page.waitForTimeout(2000)
+
+    // Aguarda o iframe de autenticação
+    await page.waitForFunction(
+      () => !!document.getElementById('UserAuthentication_content'),
+      { timeout: 15000 }
+    )
+
+    // Preenche no iframe de autenticação
+    await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
+      const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      const doc = f?.contentDocument
+      if (!doc) return
+      const u = doc.getElementById('txtUserLogin')   as HTMLInputElement
+      const p = doc.getElementById('txtUserPassword') as HTMLInputElement
+      if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
+      if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
+    }, { user: config.utilizador || '', pass: config.password || '' })
+    await page.waitForTimeout(500)
+
+    // Clica Confirmar
+    await page.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+    })
     await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(2000)
     await log('✅ Login OK')
 
     // Interceta o download do SAF-T
