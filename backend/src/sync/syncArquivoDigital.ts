@@ -162,6 +162,7 @@ export async function syncArquivoDigital(jobId?: string): Promise<void> {
       locale: 'pt-PT',
       timezoneId: 'Europe/Lisbon',
       acceptDownloads: true,
+      storageState: { cookies: [], origins: [] },
     })
     const page = await context.newPage()
 

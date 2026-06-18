@@ -91,7 +91,7 @@ export async function syncWinmax(jobId?: string): Promise<void> {
   let browser: Browser | null = null
   try {
     browser = await chromium.launch({ headless: true })
-    const context = await browser.newContext({ locale: 'pt-PT', timezoneId: 'Europe/Lisbon', acceptDownloads: true })
+    const context = await browser.newContext({ locale: 'pt-PT', timezoneId: 'Europe/Lisbon', acceptDownloads: true, storageState: { cookies: [], origins: [] } })
     const page = await context.newPage()
 
     // Interceta downloads para não bloquear

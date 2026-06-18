@@ -247,6 +247,7 @@ export async function syncSAFT(
       locale: 'pt-PT',
       timezoneId: 'Europe/Lisbon',
       acceptDownloads: true,
+      storageState: { cookies: [], origins: [] },
     })
     const page = await context.newPage()
 

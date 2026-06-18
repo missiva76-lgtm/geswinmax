@@ -83,6 +83,7 @@ export class WinmaxRPA {
       locale: 'pt-PT',
       timezoneId: 'Europe/Lisbon',
       acceptDownloads: true,
+      storageState: { cookies: [], origins: [] },
     })
     this.page = await this.context.newPage()
     await this.log('✅ Browser iniciado (headless)')
