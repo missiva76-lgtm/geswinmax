@@ -1,3 +1,4 @@
+// v202606191609 - tipos documento + FRB + upload fix
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import Layout from './components/layout/Layout'
