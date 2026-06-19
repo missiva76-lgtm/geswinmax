@@ -52,51 +52,77 @@ async function exportarCSV(
     campoFim?: string
     di?: string
     df?: string
-    expandir?: boolean
   }
 ): Promise<string | null> {
-  const fullUrl = `${BASE}${urlPath}?CompanyCode=${company}`
-  await page.goto(fullUrl, { waitUntil: 'load', timeout: 30000 })
+  // Abre a listagem dentro do MainPage via iframe (mantém a sessão)
+  const iframeId = urlPath.split('/').pop()?.replace('.aspx','') + '_content'
+  
+  // Injeta a listagem como iframe dentro do MainPage
+  await page.evaluate(({ urlPath, company, iframeId, base }: any) => {
+    // Remove iframe anterior se existir
+    const existente = document.getElementById(iframeId)
+    existente?.remove()
+    
+    // Cria novo iframe
+    const iframe = document.createElement('iframe')
+    iframe.id = iframeId
+    iframe.name = iframeId
+    iframe.src = `${base}${urlPath}?CompanyCode=${company}`
+    iframe.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;'
+    document.body.appendChild(iframe)
+  }, { urlPath, company, iframeId, base: BASE })
+
+  await page.waitForTimeout(3000)
+
+  // Expande as opções
+  await page.evaluate((id: string) => {
+    const f = document.getElementById(id) as HTMLIFrameElement
+    ;(f?.contentDocument?.getElementById('wucButtonExpand_linkButton1') as HTMLElement)?.click()
+  }, iframeId)
   await page.waitForTimeout(1000)
 
-  // Clica Expandir se necessário para mostrar mais campos
-  if (opts?.expandir !== false) {
-    await page.evaluate(() => {
-      ;(document.getElementById('wucButtonExpand_linkButton1') as HTMLElement)?.click()
-    })
-    await page.waitForTimeout(800)
-  }
-
-  // Preenche datas se existirem
+  // Preenche datas
   if (opts?.campoInicio && opts?.campoFim && opts?.di && opts?.df) {
-    await page.evaluate(({ ci, cf, di, df }: any) => {
-      const from = document.getElementById(ci) as HTMLInputElement
-      const to   = document.getElementById(cf) as HTMLInputElement
+    await page.evaluate(({ id, ci, cf, di, df }: any) => {
+      const f = document.getElementById(id) as HTMLIFrameElement
+      const doc = f?.contentDocument
+      const from = doc?.getElementById(ci) as HTMLInputElement
+      const to   = doc?.getElementById(cf) as HTMLInputElement
       if (from) { from.value = di; from.dispatchEvent(new Event('change', { bubbles: true })) }
       if (to)   { to.value   = df; to.dispatchEvent(new Event('change', { bubbles: true })) }
-    }, { ci: opts.campoInicio, cf: opts.campoFim, di: opts.di, df: opts.df })
+    }, { id: iframeId, ci: opts.campoInicio, cf: opts.campoFim, di: opts.di, df: opts.df })
     await page.waitForTimeout(300)
   }
 
-  // Muda "Enviar para" para "Ficheiro" usando selectOption do Playwright
-  try {
-    await page.selectOption('#ddlSendTo', '1')  // Ficheiro
-    await page.waitForTimeout(1500)  // Aguarda o postback ASP.NET
-  } catch { /* campo pode não existir */ }
+  // Muda ddlSendTo para Ficheiro via postback dentro do iframe
+  await page.evaluate((id: string) => {
+    const f = document.getElementById(id) as HTMLIFrameElement
+    const doc = f?.contentDocument
+    const ddl = doc?.getElementById('ddlSendTo') as HTMLSelectElement
+    if (!ddl) return
+    ddl.selectedIndex = 1  // Ficheiro
+    const win = f?.contentWindow as any
+    if (win?.__doPostBack) win.__doPostBack('ddlSendTo', '')
+  }, iframeId)
+  await page.waitForTimeout(2000)
 
-  // Selecciona formato CSV
-  try {
-    await page.selectOption('#ddlDocType', '3')  // Excel (.csv)
-    await page.waitForTimeout(300)
-  } catch { /* campo pode não existir ainda */ }
+  // Selecciona CSV
+  await page.evaluate((id: string) => {
+    const f = document.getElementById(id) as HTMLIFrameElement
+    const doc = f?.contentDocument
+    const ddlDoc = doc?.getElementById('ddlDocType') as HTMLSelectElement
+    if (ddlDoc) ddlDoc.value = '3'  // Excel (.csv)
+  }, iframeId)
+  await page.waitForTimeout(300)
 
   // Aguarda o download
   const downloadPromise = page.waitForEvent('download', { timeout: 30000 })
 
-  // Confirma
-  await page.evaluate(() => {
-    ;(document.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-  })
+  // Confirma dentro do iframe
+  await page.evaluate((id: string) => {
+    const f = document.getElementById(id) as HTMLIFrameElement
+    ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+  }, iframeId)
 
   try {
     const download: Download = await downloadPromise
