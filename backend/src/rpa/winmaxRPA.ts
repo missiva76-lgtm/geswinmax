@@ -41,7 +41,23 @@ const SEL = {
 }
 
 const TIPO_DOC: Record<string, string> = {
-  FAA: '37', FR: '55', FS: '46', FTB: '45', NCC: '40', GT: '49',
+  FAA: '37',  // Fatura A
+  FR:  '55',  // Fatura Recibo
+  FS:  '46',  // Fatura Simplificada
+  FTB: '45',  // Fat Recibo B
+  FRB: '53',  // Fatura Reboque ← confirmado ao vivo 19/06/2026
+  NCC: '40',  // Nota de Crédito
+  GT:  '49',  // Guia de Transporte
+  FO:  '50',  // Folha de Obra
+  GR:  '3',   // Guia de Remessa
+  NBB: '43',  // Nota de Débito
+  ORR: '42',  // Orçamento
+  REE: '35',  // Recibo
+  RC:  '48',  // Recibo IVA Caixa
+  VDD: '33',  // Venda a Dinheiro
+  VDB: '34',  // Venda a Dinheiro B
+  CM:  '59',  // Comprovativo
+  CO:  '56',  // Conta
 }
 
 const MENU = {

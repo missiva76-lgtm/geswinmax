@@ -19,7 +19,7 @@ router.get('/', async (_req: Request, res: Response) => {
         { codigo: 'NCC', descricao: 'Nota de Crédito',   valor: '40' },
         { codigo: 'GT',  descricao: 'Guia de Transporte', valor: '49' },
         { codigo: 'FFF', descricao: 'Fatura Fornecedor', valor: '55' },
-        { codigo: 'FRB', descricao: 'Fatura Recibo B',    valor: '56' },
+        { codigo: 'FRB', descricao: 'Fatura Reboque',      valor: '53' },
       ]
     }
     res.json(safe)
