@@ -195,12 +195,16 @@ export class WinmaxRPA {
   }
 
   private async abrirNovaFatura(): Promise<void> {
+    // Procura "Documentos de clientes" pelo título (índice muda entre sessões!)
     await this.page!.evaluate(() => {
       const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
-      ;(tb?.contentDocument?.getElementById('Toolbox_ShortcutIconDiv2') as HTMLElement)?.click()
+      const tbDoc = tb?.contentDocument
+      const divs = Array.from(tbDoc?.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]') || [])
+      const docClientes = divs.find(d => d.getAttribute('title') === 'Documentos de clientes') as HTMLElement | undefined
+      docClientes?.click()
     })
     await this.waitFor('transactionDocumentsIssueCustomerStandard_content',
-      '#wucFileList1_wucButtonInsert_linkButton1')
+      '#wucFileList1_wucButtonInsert_linkButton1', 15000)
     await this.page!.waitForTimeout(800)
     await this.page!.evaluate(() => {
       const li = document.getElementById('transactionDocumentsIssueCustomerStandard_content') as HTMLIFrameElement
