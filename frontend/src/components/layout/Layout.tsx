@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { FileSpreadsheet, LayoutDashboard, Package, Archive, Settings, LogOut, Menu, X, BarChart2 } from 'lucide-react'
+const APP_VERSION = '202606201147'
 import { auth, signOut } from '../../services/firebase'
 
 const nav = [
