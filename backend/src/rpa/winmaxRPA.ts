@@ -166,20 +166,16 @@ export class WinmaxRPA {
   }
 
   private async waitFor(iframeId: string, selector: string, timeout = 30000): Promise<void> {
-    // Primeiro espera que o iframe exista e tenha contentDocument
     await this.page!.waitForFunction(
-      ({ id }) => {
+      ({ id, sel }) => {
         const f = document.getElementById(id) as HTMLIFrameElement
-        return !!(f && f.contentDocument && f.contentDocument.readyState !== 'loading')
+        if (!f) return false
+        const doc = f.contentDocument
+        if (!doc || doc.readyState === 'loading') return false
+        return !!doc.querySelector(sel)
       },
-      { id: iframeId },
-      { timeout }
-    )
-    // Depois espera o selector dentro do iframe
-    await this.page!.waitForFunction(
-      ({ id, sel }) => !!(document.getElementById(id) as HTMLIFrameElement)?.contentDocument?.querySelector(sel),
       { id: iframeId, sel: selector },
-      { timeout }
+      { timeout, polling: 500 }
     )
   }
 

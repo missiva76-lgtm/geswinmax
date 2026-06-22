@@ -23,6 +23,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { db, appendJobLog, getConfig } from '../services/firebase'
 import { logger } from '../services/logger'
+import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
 
 interface VendaMes {
   mes: string      // YYYY-MM
@@ -63,15 +64,12 @@ async function irParaPaginaToolbox(page: Page, paginaAlvo: number): Promise<void
 }
 
 async function exportarSAFT(page: Page, dataInicio: string, dataFim: string): Promise<string> {
-  // Abre o módulo SAF-T (toolbox página 3, Div1)
-  await irParaPaginaToolbox(page, 3)
-  await page.evaluate(() => {
-    const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
-    ;(tb?.contentDocument?.getElementById('Toolbox_ShortcutIconDiv1') as HTMLElement)?.click()
-  })
+  // Procura "Exportar ficheiro SAF-T" pelo título — robusto a mudanças de página/índice
+  const found = await clicarToolboxPorTitulo(page, 'SAF-T')
+  if (!found) throw new Error('Atalho SAF-T não encontrado no Toolbox')
   await page.waitForTimeout(2000)
   await page.waitForFunction(
-    () => !!document.getElementById('utilsExportSAFTFile_content'), { timeout: 10000 })
+    () => !!document.getElementById('utilsExportSAFTFile_content'), { timeout: 30000 })
 
   // Configura o período "A definir" e as datas
   await page.evaluate(({ di, df }: { di: string; df: string }) => {

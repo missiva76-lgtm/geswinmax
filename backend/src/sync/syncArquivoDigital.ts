@@ -20,6 +20,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { db, appendJobLog, getConfig } from '../services/firebase'
 import { logger } from '../services/logger'
+import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
 
 interface DocArquivo {
   data: string
@@ -44,15 +45,13 @@ function parseFicheiro(ficheiro: string): { tipo: string; numero: string; ano: s
 }
 
 async function abrirArquivoDigital(page: Page): Promise<void> {
-  // Toolbox página 1 → Div5 (Arquivo digital)
-  await page.evaluate(() => {
-    const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
-    ;(tb?.contentDocument?.getElementById('Toolbox_ShortcutIconDiv5') as HTMLElement)?.click()
-  })
+  // Procura "Arquivo digital" pelo título — robusto a mudanças de página/índice
+  const found = await clicarToolboxPorTitulo(page, 'Arquivo digital')
+  if (!found) throw new Error('Atalho "Arquivo digital" não encontrado no Toolbox')
   await page.waitForTimeout(2000)
   await page.waitForFunction(
     () => !!document.getElementById('utilsDigitalArchive_content'),
-    { timeout: 10000 }
+    { timeout: 30000 }
   )
 }
 
