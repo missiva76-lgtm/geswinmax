@@ -210,15 +210,15 @@ export class WinmaxRPA {
   }
 
   private async verificarErro(di: string): Promise<string | null> {
-    return this.page!.evaluate(({ id, panelSel, bodySel }) => {
+    // O painel de erro do WinMax4 está sempre no DOM — só conta se tiver texto
+    return this.page!.evaluate(({ id, bodySel }) => {
       const f = document.getElementById(id) as HTMLIFrameElement
       const doc = f?.contentDocument
       if (!doc) return null
-      const panel = doc.querySelector(panelSel) as HTMLElement
-      if (!panel || panel.offsetParent === null) return null
       const body = doc.querySelector(bodySel) as HTMLElement
-      return body?.innerText?.trim() || null
-    }, { id: di, panelSel: SEL.msgPanel, bodySel: SEL.msgBody })
+      const texto = body?.innerText?.trim() || ''
+      return texto.length > 0 ? texto : null
+    }, { id: di, bodySel: SEL.msgBody })
   }
 
   private async abandonarDocumento(): Promise<void> {
