@@ -201,16 +201,38 @@ export class WinmaxRPA {
   }
 
   private async abrirNovaFatura(): Promise<void> {
-    // Procura "Documentos de clientes" pelo título (índice muda entre sessões!)
-    await this.page!.evaluate(() => {
+    // Garante que o Toolbox está carregado antes de clicar
+    await this.page!.waitForFunction(
+      () => {
+        const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
+        const doc = tb?.contentDocument
+        return !!(doc && doc.readyState === 'complete' &&
+          doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
+      },
+      { timeout: 15000, polling: 500 }
+    )
+
+    // Verifica se o atalho existe e clica
+    const encontrado = await this.page!.evaluate(() => {
       const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
       const tbDoc = tb?.contentDocument
       const divs = Array.from(tbDoc?.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]') || [])
       const docClientes = divs.find(d => d.getAttribute('title') === 'Documentos de clientes') as HTMLElement | undefined
-      docClientes?.click()
+      if (docClientes) { docClientes.click(); return true }
+      return false
     })
+    await this.log(`  🖱️ Clique "Documentos de clientes": ${encontrado ? 'OK' : 'NÃO ENCONTRADO'}`)
+
+    // Aguarda o iframe aparecer no DOM
+    await this.page!.waitForFunction(
+      () => !!document.getElementById('transactionDocumentsIssueCustomerStandard_content'),
+      { timeout: 15000, polling: 300 }
+    )
+    await this.log('  📋 Iframe transactionDocuments presente')
+
+    // Aguarda o botão dentro do iframe
     await this.waitFor('transactionDocumentsIssueCustomerStandard_content',
-      '#wucFileList1_wucButtonInsert_linkButton1', 30000)
+      '#wucFileList1_wucButtonInsert_linkButton1', 20000)
     await this.log('  📂 Lista de documentos carregada')
     await this.page!.waitForTimeout(800)
     await this.page!.evaluate(() => {
