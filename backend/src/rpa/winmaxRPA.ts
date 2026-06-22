@@ -117,7 +117,7 @@ export class WinmaxRPA {
     // Aguarda iframe de autenticação
     await this.page!.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 15000 }
+      { timeout: 30000 }
     )
 
     // Preenche utilizador e password no iframe
@@ -165,7 +165,17 @@ export class WinmaxRPA {
     )
   }
 
-  private async waitFor(iframeId: string, selector: string, timeout = 10000): Promise<void> {
+  private async waitFor(iframeId: string, selector: string, timeout = 30000): Promise<void> {
+    // Primeiro espera que o iframe exista e tenha contentDocument
+    await this.page!.waitForFunction(
+      ({ id }) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        return !!(f && f.contentDocument && f.contentDocument.readyState !== 'loading')
+      },
+      { id: iframeId },
+      { timeout }
+    )
+    // Depois espera o selector dentro do iframe
     await this.page!.waitForFunction(
       ({ id, sel }) => !!(document.getElementById(id) as HTMLIFrameElement)?.contentDocument?.querySelector(sel),
       { id: iframeId, sel: selector },
@@ -204,13 +214,14 @@ export class WinmaxRPA {
       docClientes?.click()
     })
     await this.waitFor('transactionDocumentsIssueCustomerStandard_content',
-      '#wucFileList1_wucButtonInsert_linkButton1', 15000)
+      '#wucFileList1_wucButtonInsert_linkButton1', 30000)
+    await this.log('  📂 Lista de documentos carregada')
     await this.page!.waitForTimeout(800)
     await this.page!.evaluate(() => {
       const li = document.getElementById('transactionDocumentsIssueCustomerStandard_content') as HTMLIFrameElement
       ;(li?.contentDocument?.getElementById('wucFileList1_wucButtonInsert_linkButton1') as HTMLElement)?.click()
     })
-    await this.waitFor('DocumentIssue_content', SEL.entityCode)
+    await this.waitFor('DocumentIssue_content', SEL.entityCode, 30000)
     await this.page!.waitForTimeout(800)
   }
 
