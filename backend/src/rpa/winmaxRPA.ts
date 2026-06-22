@@ -155,11 +155,41 @@ export class WinmaxRPA {
   }
 
   private async evalIn(iframeId: string, code: string): Promise<unknown> {
+    // Usa script injetado no DOM do iframe para evitar restrições de strict mode
+    // (window.eval em strict mode bloqueia 'arguments' usado pelo ASP.NET WebForms)
     return this.page!.evaluate(
       ({ id, code }) => {
         const f = document.getElementById(id) as HTMLIFrameElement
-        if (!f?.contentWindow) throw new Error(`Iframe não encontrado: ${id}`)
-        return (f.contentWindow as any).eval(code)
+        if (!f?.contentWindow || !f?.contentDocument) throw new Error(`Iframe não encontrado: ${id}`)
+        const doc = f.contentDocument
+        // Remove script anterior se existir
+        const old = doc.getElementById('__rpa_eval__')
+        if (old) old.remove()
+        return new Promise<unknown>((resolve, reject) => {
+          try {
+            // Cria um script que executa no contexto do iframe (não-strict)
+            const script = doc.createElement('script')
+            script.id = '__rpa_eval__'
+            script.textContent = `
+              (function() {
+                try {
+                  var __result__ = (function() { return (${code}); })();
+                  window.__rpa_result__ = __result__;
+                  window.__rpa_error__ = null;
+                } catch(e) {
+                  window.__rpa_result__ = null;
+                  window.__rpa_error__ = e.message || String(e);
+                }
+              })();
+            `
+            doc.head.appendChild(script)
+            const err = (f.contentWindow as any).__rpa_error__
+            if (err) reject(new Error(err))
+            else resolve((f.contentWindow as any).__rpa_result__)
+          } catch(e: any) {
+            reject(e)
+          }
+        })
       },
       { id: iframeId, code }
     )
