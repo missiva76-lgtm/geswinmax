@@ -48,7 +48,6 @@ export default function Dados() {
       setArtigos(res)
       setServerError(null)
     } catch(e: any) { setServerError(e) }
-    setArtigos(res)
     setLoading(false)
   }
 

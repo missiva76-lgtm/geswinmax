@@ -56,7 +56,7 @@ export default function Arquivo() {
     setTimeout(() => { setSyncing(false); pesquisar(q) }, 10000)
   }
 
-  const fmt = (n: number) => n.toFixed(2).replace('.', ',') + ' €'
+  const fmt = (n: number | undefined | null) => n != null ? n.toFixed(2).replace('.', ',') + ' €' : '—'
 
   return (
     <div>

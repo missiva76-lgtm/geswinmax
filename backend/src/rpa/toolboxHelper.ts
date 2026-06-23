@@ -4,6 +4,19 @@
 import { Page } from 'playwright'
 
 export async function clicarToolboxPorTitulo(page: Page, titulo: string, maxPaginas = 11): Promise<boolean> {
+  // Garante que começa na página 1 do Toolbox
+  await page.evaluate(() => {
+    const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
+    const lbl = tb?.contentDocument?.getElementById('LabelPages')?.innerText?.trim() || ''
+    const actual = parseInt(lbl.split('/')[0].trim()) || 1
+    if (actual > 1) {
+      for (let i = 1; i < actual; i++) {
+        (tb?.contentDocument?.getElementById('LinkButtonPrevPage') as HTMLElement)?.click()
+      }
+    }
+  }).catch(() => {})
+  await page.waitForTimeout(800)
+
   for (let p = 1; p <= maxPaginas; p++) {
     // Navega até à página p
     let tentativas = 0
