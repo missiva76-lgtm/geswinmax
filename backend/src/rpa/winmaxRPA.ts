@@ -313,13 +313,11 @@ export class WinmaxRPA {
     const tipoAtual = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || ''`)
     await this.log(`  📄 Tipo documento: ${fatura.tipo_documento} (val=${tipoAtual})`)
 
-    // Preenche código do cliente
-    await this.evalIn(di, `
-      const e = document.getElementById('txtEntityCode');
-      e.value = '${fatura.cliente_codigo}';
-      e.dispatchEvent(new Event('change', { bubbles: true }));
-      e.dispatchEvent(new Event('blur', { bubbles: true }));
-    `)
+    // Preenche código do cliente usando frameLocator do Playwright (mais fiável que evalIn para inputs)
+    const frame = this.page!.frameLocator(`#${di}`)
+    await frame.locator('#txtEntityCode').fill(String(fatura.cliente_codigo))
+    await frame.locator('#txtEntityCode').press('Tab')
+    await this.page!.waitForTimeout(500)
 
     // Aguarda o postback de validação do cliente (lblEntityName preenche quando válido)
     await this.page!.waitForFunction(
@@ -329,7 +327,7 @@ export class WinmaxRPA {
         return nome.length > 0
       },
       di,
-      { timeout: 10000, polling: 500 }
+      { timeout: 15000, polling: 500 }
     )
 
     const erroEnt = await this.verificarErro(di)
