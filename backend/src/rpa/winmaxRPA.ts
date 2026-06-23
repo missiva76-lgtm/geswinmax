@@ -276,20 +276,41 @@ export class WinmaxRPA {
   private async preencherCabecalho(fatura: Fatura): Promise<void> {
     const di = 'DocumentIssue_content'
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
+
+    // Muda tipo de documento
     await this.evalIn(di, `
       const s = document.getElementById('ddlDocumentType');
       s.value = '${tipoVal}';
       s.dispatchEvent(new Event('change', { bubbles: true }));
     `)
-    await this.page!.waitForTimeout(400)
-    // Data = data do sistema (não se preenche)
+
+    // Aguarda o postback ASP.NET completar — o ddlDocumentType fica disponível de novo quando pronto
+    await this.waitFor(di, '#ddlDocumentType', 15000)
+    await this.page!.waitForTimeout(600)
+
+    // Confirma que o tipo ficou selecionado corretamente após postback
+    const tipoAtual = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || ''`)
+    await this.log(`  📄 Tipo documento: ${fatura.tipo_documento} (val=${tipoAtual})`)
+
+    // Preenche código do cliente
     await this.evalIn(di, `
       const e = document.getElementById('txtEntityCode');
       e.value = '${fatura.cliente_codigo}';
       e.dispatchEvent(new Event('change', { bubbles: true }));
       e.dispatchEvent(new Event('blur', { bubbles: true }));
     `)
-    await this.page!.waitForTimeout(1000)
+
+    // Aguarda o postback de validação do cliente (lblEntityName preenche quando válido)
+    await this.page!.waitForFunction(
+      ({ id }) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const nome = f?.contentDocument?.getElementById('lblEntityName')?.innerText?.trim() || ''
+        return nome.length > 0
+      },
+      di,
+      { timeout: 10000, polling: 500 }
+    )
+
     const erroEnt = await this.verificarErro(di)
     if (erroEnt) throw new Error(`Cliente inválido (${fatura.cliente_codigo}): ${erroEnt}`)
     const nome = await this.evalIn(di, `document.getElementById('lblEntityName')?.innerText || ''`)

@@ -95,14 +95,17 @@ async function exportarCSV(
   }
 
   // Muda ddlSendTo para Ficheiro via postback dentro do iframe
+  // Usa script injetado para evitar restrições de strict mode do Playwright
   await page.evaluate((id: string) => {
     const f = document.getElementById(id) as HTMLIFrameElement
     const doc = f?.contentDocument
-    const ddl = doc?.getElementById('ddlSendTo') as HTMLSelectElement
+    if (!doc) return
+    const ddl = doc.getElementById('ddlSendTo') as HTMLSelectElement
     if (!ddl) return
     ddl.selectedIndex = 1  // Ficheiro
-    const win = f?.contentWindow as any
-    if (win?.__doPostBack) win.__doPostBack('ddlSendTo', '')
+    const script = doc.createElement('script')
+    script.textContent = `if(typeof __doPostBack==='function') __doPostBack('ddlSendTo','')`
+    doc.head.appendChild(script)
   }, iframeId)
   await page.waitForTimeout(2000)
 
