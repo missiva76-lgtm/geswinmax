@@ -302,7 +302,7 @@ export class WinmaxRPA {
 
     // Aguarda o postback de validação do cliente (lblEntityName preenche quando válido)
     await this.page!.waitForFunction(
-      ({ id }) => {
+      (id: string) => {
         const f = document.getElementById(id) as HTMLIFrameElement
         const nome = f?.contentDocument?.getElementById('lblEntityName')?.innerText?.trim() || ''
         return nome.length > 0
