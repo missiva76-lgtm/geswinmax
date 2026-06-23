@@ -132,24 +132,25 @@ export class WinmaxRPA {
     }, { user: this.config.utilizador, pass: this.config.password })
     await this.page!.waitForTimeout(500)
 
-    // Clica Confirmar
-    await this.page!.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-    })
-    await this.page!.waitForLoadState('networkidle')
+    // Clica Confirmar — o WinMax4 faz uma navegação após login bem sucedido
+    await Promise.all([
+      this.page!.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+      this.page!.evaluate(() => {
+        const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+        ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      })
+    ])
     await this.page!.waitForTimeout(2000)
 
-    // Verifica se o login foi bem sucedido
-    const ok = await this.page!.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      // Se o iframe de autenticação desapareceu = login ok
-      return !f || f.offsetParent === null
-    })
-
-    if (!ok) {
+    // Verifica se o login foi bem sucedido — aguarda que o Toolbox esteja presente
+    try {
+      await this.page!.waitForFunction(
+        () => !!document.getElementById('Toolbox_content'),
+        { timeout: 15000 }
+      )
+    } catch {
       await this.page!.screenshot({ path: 'logs/erro-login.png' })
-      throw new Error('Login falhou — credenciais incorrectas?')
+      throw new Error('Login falhou — Toolbox não carregou após autenticação')
     }
     await this.log('✅ Login OK')
   }
