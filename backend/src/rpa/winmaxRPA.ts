@@ -278,11 +278,12 @@ export class WinmaxRPA {
     const di = 'DocumentIssue_content'
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
 
-    // Muda tipo de documento via script injetado (evita strict mode do Playwright)
+    // Muda tipo de documento via dispatchEvent change
+    // (__doPostBack falha mesmo em script injetado porque o ScriptManager usa arguments internamente)
     await this.evalIn(di, `
       const s = document.getElementById('ddlDocumentType');
       s.value = '${tipoVal}';
-      __doPostBack('ddlDocumentType', '');
+      s.dispatchEvent(new Event('change', { bubbles: true }));
     `)
 
     // Aguarda o postback ASP.NET completar:
