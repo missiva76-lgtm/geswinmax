@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Search, FileText, ExternalLink, RefreshCw, X, Download } from 'lucide-react'
-import { getArquivo, triggerSyncArquivo } from '../services/api'
+import { getArquivo, triggerSyncArquivo, ServerWakingError } from '../services/api'
+import ServerWakingBanner from '../components/ServerWakingBanner'
 
 interface DocArquivo {
   id: string
@@ -24,12 +25,19 @@ export default function Arquivo() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [pdfUrl, setPdfUrl]   = useState<string | null>(null)
+  const [serverError, setServerError] = useState<Error | null>(null)
   const searchRef             = useRef<ReturnType<typeof setTimeout>>()
 
   const pesquisar = async (query: string) => {
     setLoading(true)
-    const res = await getArquivo(query || undefined).catch(() => [])
-    setDocs(res)
+    try {
+      const res = await getArquivo(query || undefined)
+      setDocs(res)
+      setServerError(null)
+    } catch(e: any) {
+      setServerError(e)
+      setDocs([])
+    }
     setLoading(false)
   }
 
@@ -52,6 +60,7 @@ export default function Arquivo() {
 
   return (
     <div>
+      <ServerWakingBanner error={serverError} onRetry={() => pesquisar(q)} />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Arquivo digital</h2>

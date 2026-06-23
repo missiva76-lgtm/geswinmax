@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Search, RefreshCw, Download } from 'lucide-react'
-import { getArtigos, triggerSync } from '../services/api'
+import { getArtigos, triggerSync, ServerWakingError } from '../services/api'
+import ServerWakingBanner from '../components/ServerWakingBanner'
 import { Artigo } from '../types'
 import * as XLSX from 'xlsx'
 
@@ -38,10 +39,15 @@ export default function Dados() {
   const [q, setQ]               = useState('')
   const [loading, setLoading]   = useState(false)
   const [syncing, setSyncing]   = useState(false)
+  const [serverError, setServerError] = useState<Error | null>(null)
 
   const pesquisarArtigos = async (query: string) => {
     setLoading(true)
-    const res = await getArtigos(query).catch(() => [])
+    try {
+      const res = await getArtigos(query)
+      setArtigos(res)
+      setServerError(null)
+    } catch(e: any) { setServerError(e) }
     setArtigos(res)
     setLoading(false)
   }
@@ -49,7 +55,8 @@ export default function Dados() {
   const carregarMovimentos = async (tipo: 'vendas' | 'compras') => {
     setLoading(true)
     const colecao = tipo === 'vendas' ? 'movimentos_venda' : 'movimentos_compra'
-    const res = await fetch(`${API}/dados/${colecao}`).then(r => r.json()).catch(() => [])
+    let res = []
+    try { res = await fetch(`${API}/dados/${colecao}`).then(r => r.json()); setServerError(null) } catch(e: any) { setServerError(e) }
     tipo === 'vendas' ? setVendas(res) : setCompras(res)
     setLoading(false)
   }
@@ -114,6 +121,7 @@ export default function Dados() {
 
   return (
     <div>
+      <ServerWakingBanner error={serverError} onRetry={() => carregarArtigos(q)} />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Dados WinMax4</h2>
