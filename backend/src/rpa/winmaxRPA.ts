@@ -277,16 +277,25 @@ export class WinmaxRPA {
     const di = 'DocumentIssue_content'
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
 
-    // Muda tipo de documento
+    // Muda tipo de documento via script injetado (evita strict mode do Playwright)
+    // O ASP.NET WebForms usa __doPostBack para submeter o change do dropdown
     await this.evalIn(di, `
       const s = document.getElementById('ddlDocumentType');
       s.value = '${tipoVal}';
-      s.dispatchEvent(new Event('change', { bubbles: true }));
+      __doPostBack('ddlDocumentType', '');
     `)
 
-    // Aguarda o postback ASP.NET completar — o ddlDocumentType fica disponível de novo quando pronto
-    await this.waitFor(di, '#ddlDocumentType', 15000)
-    await this.page!.waitForTimeout(600)
+    // Aguarda o postback ASP.NET completar — espera que o valor seja o correto
+    await this.page!.waitForFunction(
+      ({ id, val }: { id: string; val: string }) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const s = f?.contentDocument?.getElementById('ddlDocumentType') as HTMLSelectElement
+        return s?.value === val
+      },
+      { id: di, val: tipoVal },
+      { timeout: 15000, polling: 500 }
+    )
+    await this.page!.waitForTimeout(400)
 
     // Confirma que o tipo ficou selecionado corretamente após postback
     const tipoAtual = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || ''`)
