@@ -340,20 +340,21 @@ export class WinmaxRPA {
     const di = 'DocumentIssue_content'
     const n = idx + 1
 
-    await this.evalIn(di, `
-      ['txtArticleCode','txtDesignation','txtUnitaryPrice','txtQuantity','txtDiscount1']
-        .forEach(id => { const el = document.getElementById(id); if(el){ el.value=''; el.dispatchEvent(new Event('change',{bubbles:true})); }});
-    `)
-    await this.page!.waitForTimeout(200)
+    // Clica "Inserir" para abrir o formulário de nova linha
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#wucButtonInsertDocumentDetail_linkButton1')
+      .click()
+    await this.waitFor(di, '#txtArticleCode', 10000)
+    await this.page!.waitForTimeout(300)
 
-    // Insere referência do artigo — WinMax4 preenche descrição e IVA automaticamente
-    await this.evalIn(di, `
-      const a = document.getElementById('txtArticleCode');
-      a.value = '${linha.artigo_ref.replace(/'/g, "\\'")}';
-      a.dispatchEvent(new Event('change', { bubbles: true }));
-      a.dispatchEvent(new Event('blur', { bubbles: true }));
-    `)
-    await this.page!.waitForTimeout(800)
+    // Insere referência do artigo via frameLocator — WinMax4 preenche descrição e IVA automaticamente
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtArticleCode')
+      .fill(linha.artigo_ref)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtArticleCode')
+      .press('Tab')
+    await this.page!.waitForTimeout(1000)
 
     const erroArtigo = await this.verificarErro(di)
     if (erroArtigo) throw new ErroLinhaArtigo(n, linha.artigo_ref,
@@ -389,7 +390,10 @@ export class WinmaxRPA {
 
     // IVA e descrição vêm da ficha do artigo no WinMax4 — não se preenchem
 
-    await this.evalIn(di, `window.InsertDocumentDetail()`)
+    // Clica botão "Inserir" via frameLocator (mais fiável que window.InsertDocumentDetail)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#wucButtonInsertDocumentDetail_linkButton1')
+      .click()
     await this.page!.waitForTimeout(1200)
 
     const erroInsert = await this.verificarErro(di)
@@ -407,7 +411,9 @@ export class WinmaxRPA {
 
     await this.evalIn(di, `document.querySelector('input[id^="DetailPropertyRemarks"]')?.click()`)
     await this.page!.waitForTimeout(500)
-    await this.evalIn(di, `window.__doPostBack('lbProcessPropertyIconClick','')`)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('input[id^="DetailPropertyRemarks"]')
+      .click()
     await this.page!.waitForTimeout(1500)
     await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
 
