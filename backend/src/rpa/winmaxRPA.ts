@@ -409,11 +409,17 @@ export class WinmaxRPA {
       `!!document.querySelector('input[id^="DetailPropertyRemarks"]')`) as boolean
     if (!tem) { await this.log('  💬 Artigo sem textarea de comentário'); return }
 
-    await this.evalIn(di, `document.querySelector('input[id^="DetailPropertyRemarks"]')?.click()`)
-    await this.page!.waitForTimeout(500)
+    // Aguarda que o overlay_modal desapareça antes de clicar
+    await this.page!.waitForFunction(
+      () => !document.getElementById('overlay_modal') ||
+            (document.getElementById('overlay_modal') as HTMLElement).style.display === 'none' ||
+            !(document.getElementById('overlay_modal') as HTMLElement).offsetParent,
+      { timeout: 10000, polling: 300 }
+    ).catch(() => {})
+
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('input[id^="DetailPropertyRemarks"]')
-      .click()
+      .click({ timeout: 10000 })
     await this.page!.waitForTimeout(1500)
     await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
 
