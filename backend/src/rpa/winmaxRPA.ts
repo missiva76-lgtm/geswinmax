@@ -279,26 +279,36 @@ export class WinmaxRPA {
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
 
     // Muda tipo de documento via script injetado (evita strict mode do Playwright)
-    // O ASP.NET WebForms usa __doPostBack para submeter o change do dropdown
     await this.evalIn(di, `
       const s = document.getElementById('ddlDocumentType');
       s.value = '${tipoVal}';
       __doPostBack('ddlDocumentType', '');
     `)
 
-    // Aguarda o postback ASP.NET completar — espera que o valor seja o correto
+    // Aguarda o postback ASP.NET completar:
+    // 1. Espera que o iframe fique loading (postback iniciou)
+    // 2. Espera que volte a complete (postback terminou)
     await this.page!.waitForFunction(
-      ({ id, val }: { id: string; val: string }) => {
+      (id: string) => {
         const f = document.getElementById(id) as HTMLIFrameElement
-        const s = f?.contentDocument?.getElementById('ddlDocumentType') as HTMLSelectElement
-        return s?.value === val
+        return f?.contentDocument?.readyState === 'loading'
       },
-      { id: di, val: tipoVal },
-      { timeout: 15000, polling: 500 }
+      di,
+      { timeout: 8000, polling: 200 }
+    ).catch(() => { /* pode não apanhar o loading se for muito rápido */ })
+
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        return f?.contentDocument?.readyState === 'complete' &&
+               !!f?.contentDocument?.getElementById('ddlDocumentType')
+      },
+      di,
+      { timeout: 15000, polling: 300 }
     )
     await this.page!.waitForTimeout(400)
 
-    // Confirma que o tipo ficou selecionado corretamente após postback
+    // Confirma o tipo após postback
     const tipoAtual = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || ''`)
     await this.log(`  📄 Tipo documento: ${fatura.tipo_documento} (val=${tipoAtual})`)
 
