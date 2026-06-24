@@ -25,6 +25,8 @@ import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
 interface DocArquivo {
   data: string
   informacao: string
+  cliente: string
+  total_liquido: number | null
   ficheiro: string
   tamanho: string
   tipo_documento: string
@@ -110,16 +112,26 @@ async function extrairLinhas(page: Page): Promise<DocArquivo[]> {
       const cells = Array.from(tr.querySelectorAll('td'))
         .map(td => (td as HTMLTableCellElement).innerText.trim())
       // colunas: (select) | Data | Informação | Ficheiro | Tamanho | (apagar)
+      // "Informação" tem formato: "FTB 2026/48\nNome do cliente\n141,92 EUR"
+      const informacao = cells[2] || ''
+      const linhasInfo = informacao.split('\n').map((s: string) => s.trim()).filter(Boolean)
+      const cliente = linhasInfo[1] || ''
+      // Extrai total — última linha com padrão numérico + EUR
+      const totalStr = linhasInfo.find((l: string) => /[\d,.]+\s*EUR/.test(l)) || ''
+      const totalNum = parseFloat(totalStr.replace(/[^\d,.]/g,'').replace(',','.')) || null
+
       return {
         data:       cells[1] || '',
-        informacao: cells[2] || '',
+        informacao,
+        cliente,
+        total_liquido: totalNum,
         ficheiro:   cells[3] || '',
         tamanho:    cells[4] || '',
         tipo_documento:   '',
         numero_documento: '',
         ano:              '',
       }
-    }).filter(r => r.ficheiro)
+    }).filter((r: any) => r.ficheiro)
   })
 }
 
@@ -231,31 +243,12 @@ export async function syncArquivoDigital(jobId?: string): Promise<void> {
         linha.numero_documento = numero
         linha.ano              = ano
 
-        // Tenta descarregar o PDF (best effort)
-        let pdfUrl: string | null = null
-        try {
-          const downloadPromise = page.waitForEvent('download', { timeout: 12000 })
-          await page.evaluate((nomeFicheiro: string) => {
-            const f   = document.getElementById('DigitalArchiveDetails_content') as HTMLIFrameElement
-            const doc = f?.contentDocument
-            if (!doc) return
-            const cells = Array.from(doc.querySelectorAll('td'))
-            const cell  = cells.find(td => td.innerText.trim() === nomeFicheiro) as HTMLTableCellElement | undefined
-            const row   = cell?.closest('tr')
-            const lnk   = row?.querySelector('a[id*="lnkSelect"]') as HTMLElement | undefined
-            lnk?.click()
-          }, linha.ficheiro)
-
-          const download = await downloadPromise
-          const destino  = path.join(pastaPDFs, linha.ficheiro)
-          await download.saveAs(destino)
-          pdfUrl = `${backendUrl}/api/pdfs/arquivo/${encodeURIComponent(linha.ficheiro)}`
-        } catch { /* PDF não disponível */ }
-
+        // Guarda metadados sem descarregar PDF (demasiado lento para todos os documentos)
+        // O PDF pode ser descarregado on-demand via /api/arquivo/:id/pdf
         const docId = linha.ficheiro.replace(/[.\/\\]/g, '_')
         await db().collection('arquivo').doc(docId).set({
           ...linha,
-          pdf_url:      pdfUrl,
+          pdf_url:      null,
           importado_em: admin.firestore.FieldValue.serverTimestamp(),
           fonte:        'arquivo_digital_winmax',
         }, { merge: true })
