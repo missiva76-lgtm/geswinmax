@@ -439,35 +439,62 @@ export class WinmaxRPA {
 
   private async imprimirEGuardarPDF(numPrevisto: string): Promise<string> {
     const di = 'DocumentIssue_content'
-    const downloadPromise = this.page!.waitForEvent('download', { timeout: 20000 })
 
+    // Seleciona opção "Imprimir" no menu moderno
     await this.evalIn(di, `
-      document.getElementById('wucModernMenu_hfSelectedOption').value = '${MENU.imprimir}';
-      window.__doPostBack('wucModernMenu$lbSelectOption','');
+      const hf = document.getElementById('wucModernMenu_hfSelectedOption');
+      if (hf) hf.value = '${MENU.imprimir}';
+      const lb = document.getElementById('wucModernMenu_lbSelectOption');
+      if (lb) lb.click();
     `)
     await this.page!.waitForTimeout(2000)
-    await this.waitFor('DocumentIssuePrint_content', SEL.printReport, 8000)
+    await this.waitFor('DocumentIssuePrint_content', SEL.printReport, 20000)
 
-    await this.page!.evaluate(({ tpl }) => {
-      const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
-      const ddl = f?.contentDocument?.getElementById('ddlPrintReportName') as HTMLSelectElement
-      if (ddl) { ddl.value = tpl; ddl.dispatchEvent(new Event('change', { bubbles: true })) }
-    }, { tpl: this.config.templatePDF })
+    // Seleciona template PDF (usa o que estiver selecionado por defeito se não configurado)
+    if (this.config.templatePDF) {
+      await this.page!.evaluate(({ tpl }) => {
+        const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
+        const ddl = f?.contentDocument?.getElementById('ddlPrintReportName') as HTMLSelectElement
+        if (ddl) { ddl.value = tpl; ddl.dispatchEvent(new Event('change', { bubbles: true })) }
+      }, { tpl: this.config.templatePDF })
+      await this.page!.waitForTimeout(500)
+    }
 
+    // Clica Confirmar e aguarda o viewer de PDF aparecer
     await this.page!.evaluate(() => {
       const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
+    await this.page!.waitForTimeout(3000)
 
+    // Captura o URL do Download.aspx a partir do iframe viewer gerado
     try {
-      const download = await downloadPromise
+      const downloadUrl = await this.page!.evaluate(() => {
+        const iframes = Array.from(document.querySelectorAll('iframe'))
+        const viewer = iframes.find(f => f.src?.includes('Download.aspx'))
+        return viewer?.src || null
+      })
+
+      if (!downloadUrl) {
+        await this.log('  ⚠️  PDF: URL de download não encontrado')
+        return ''
+      }
+
+      // Faz fetch do PDF usando as cookies da sessão Playwright
+      const cookies = await this.page!.context().cookies()
+      const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+      const resp = await fetch(downloadUrl, { headers: { Cookie: cookieHeader } })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+
+      const buffer = Buffer.from(await resp.arrayBuffer())
       const nomeSeguro = numPrevisto.replace(/[\/\\:*?"<>|]/g, '_')
-      const destino = path.join(this.config.pastaDestinoPDF, `${nomeSeguro}.pdf`)
-      await download.saveAs(destino)
-      await this.log(`  🖨️  PDF: ${destino}`)
+      const destino = path.join(this.config.pastaDestinoPDF || '/tmp/pdfs', `${nomeSeguro}.pdf`)
+      fs.mkdirSync(path.dirname(destino), { recursive: true })
+      fs.writeFileSync(destino, buffer)
+      await this.log(`  🖨️  PDF guardado: ${nomeSeguro}.pdf`)
       return destino
-    } catch {
-      await this.log('  ⚠️  PDF: download não interceptado')
+    } catch (e: any) {
+      await this.log(`  ⚠️  PDF: erro ao guardar — ${e.message}`)
       return ''
     }
   }
@@ -478,24 +505,29 @@ export class WinmaxRPA {
       `document.getElementById('lblNextDocumentNumber')?.innerText?.replace(/[()]/g,'').trim() || 'doc'`
     ) as string
 
+    // Cancela linha de edição vazia se estiver aberta
+    const temCancelar = await this.evalIn(di,
+      `!!document.getElementById('wucButtonCancelDocumentDetail_linkButton1')`
+    ) as boolean
+    if (temCancelar) {
+      await this.page!.frameLocator('#DocumentIssue_content')
+        .locator('#wucButtonCancelDocumentDetail_linkButton1')
+        .click()
+      await this.page!.waitForTimeout(800)
+      await this.log('  ✖️  Linha vazia cancelada')
+    }
+
     const localPDF = await this.imprimirEGuardarPDF(numPrevisto)
 
-    await this.evalIn(di, `
-      document.getElementById('wucModernMenu_hfSelectedOption').value = '${MENU.terminar}';
-      window.__doPostBack('wucModernMenu$lbSelectOption','');
-    `)
-    await this.page!.waitForTimeout(1500)
-
-    await this.page!.evaluate(() => {
-      const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
-      const win = f?.contentWindow as any
-      if (typeof win?.ConfirmDocumentCloseWindow === 'function') win.ConfirmDocumentCloseWindow()
-    }).catch(() => {})
-    await this.page!.waitForTimeout(1500)
+    // Clica "Terminar" diretamente (botão wucButtonClose_linkButton1)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#wucButtonClose_linkButton1')
+      .click()
+    await this.page!.waitForTimeout(2000)
 
     const numDoc = await this.evalIn(di,
       `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
-    ) as string
+    ).catch(() => '') as string
 
     // Renomeia o PDF com o número definitivo
     if (localPDF && numDoc && numDoc !== numPrevisto) {
