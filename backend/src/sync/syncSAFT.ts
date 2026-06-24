@@ -126,9 +126,20 @@ async function exportarSAFT(page: Page, dataInicio: string, dataFim: string): Pr
     return ''
   })
 
-  // O ficheiro segue o padrão SAF-T-PT_YYYYMMDD_YYYYMMDD.XML
-  const anoInicio = dataInicio.replace(/\//g,'').slice(4) + dataInicio.replace(/\//g,'').slice(0,4).replace(/(\d{2})(\d{2})/, '$1$2')
-  return `SAF-T-PT_${dataInicio.replace(/\//g,'')}_${dataFim.replace(/\//g,'')}.XML`
+  // Tenta obter o nome do ficheiro do ProgressBox
+  const nomeDoProgress = await page.evaluate(() => {
+    const prog = document.getElementById('utilsExportSAFTFileProgressWindowID_content') as HTMLIFrameElement
+    const txt = prog?.contentDocument?.getElementById('lblExtendedText')?.innerText?.trim() || ''
+    const m = txt.match(/SAF-T[\w_.-]+\.XML/i)
+    return m?.[0] || null
+  }).catch(() => null)
+
+  if (nomeDoProgress) return nomeDoProgress
+
+  // Fallback: padrão standard
+  const di2 = dataInicio.replace(/\//g,'')
+  const df2 = dataFim.replace(/\//g,'')
+  return `SAF-T-PT_${di2}_${df2}.XML`
 }
 
 function parsearSAFT(xmlContent: string): SaftResumo {
@@ -275,26 +286,39 @@ export async function syncSAFT(
     }, { user: config.utilizador || '', pass: config.password || '' })
     await page.waitForTimeout(500)
 
-    // Clica Confirmar
-    await page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-    })
-    await page.waitForLoadState('networkidle')
+    // Clica Confirmar com Promise.all para evitar race condition
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+      page.evaluate(() => {
+        const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+        ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      })
+    ])
     await page.waitForTimeout(2000)
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 15000 })
     await log('✅ Login OK')
 
-    // Interceta o download do SAF-T
-    const downloadPromise = page.waitForEvent('download', { timeout: 90000 })
+    const nomeFicheiro = await exportarSAFT(page, di, df)
+    await log(`📥 SAF-T exportado: ${nomeFicheiro}`)
 
-    await exportarSAFT(page, di, df)
+    // Captura o URL de download do ProgressBox (Download.aspx?type=5&ID=XXXX)
+    const downloadUrl = await page.evaluate(() => {
+      const prog = document.getElementById('utilsExportSAFTFileProgressWindowID_content') as HTMLIFrameElement
+      const links = Array.from(prog?.contentDocument?.querySelectorAll('a') || []) as HTMLAnchorElement[]
+      const link = links.find(a => a.href?.includes('Download.aspx'))
+      return link?.href || null
+    })
 
-    // Descarrega o ficheiro XML
-    const download   = await downloadPromise
-    const nomeFicheiro = download.suggestedFilename() || `SAFT_${di.replace(/\//g,'')}_${df.replace(/\//g,'')}.xml`
+    if (!downloadUrl) throw new Error('URL de download do SAF-T não encontrado no ProgressBox')
+
     const caminhoLocal = path.join(pastaSAFT, nomeFicheiro)
-    await download.saveAs(caminhoLocal)
-    await log(`📥 SAF-T descarregado: ${nomeFicheiro}`)
+    const cookies = await page.context().cookies()
+    const cookieHeader = cookies.map((c: any) => `${c.name}=${c.value}`).join('; ')
+    const resp = await fetch(downloadUrl, { headers: { Cookie: cookieHeader } })
+    if (!resp.ok) throw new Error(`Erro ao descarregar SAF-T: HTTP ${resp.status}`)
+    const buffer = Buffer.from(await resp.arrayBuffer())
+    fs.writeFileSync(caminhoLocal, buffer)
+    await log(`📥 SAF-T guardado: ${nomeFicheiro} (${Math.round(buffer.length/1024)}KB)`)
 
     // Lê e parseia o XML
     const xmlContent = fs.readFileSync(caminhoLocal, 'utf-8')
