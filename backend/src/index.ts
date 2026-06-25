@@ -69,7 +69,9 @@ app.use('/api/dados',   dadosRouter)
 app.use('/api/saft',    saftRouter)
 
 async function agendarSync() {
+  console.info('[agendarSync] A ler config...')
   const config = await getConfig()
+  console.info('[agendarSync] Config lida:', JSON.stringify(config).substring(0, 100))
   const hora = config.sync_hora || '02:00'
   const [h, m] = hora.split(':')
 
@@ -107,11 +109,7 @@ app.listen(PORT, async () => {
   logger.info(`\n╔══════════════════════════════════════╗`)
   logger.info(`║  GesWinmax Backend — porta ${PORT}       ║`)
   logger.info(`╚══════════════════════════════════════╝\n`)
-  try {
-    await agendarSync()
-  } catch (e) {
-    logger.error(`[Arranque] Erro ao agendar sync: ${e}`)
-  }
+  logger.info('✅ Backend pronto — sync manual disponível via API')
 })
 
 // Evita crash por erros não tratados — mantém o servidor vivo para diagnóstico
