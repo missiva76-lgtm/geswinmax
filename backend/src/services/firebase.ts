@@ -8,7 +8,7 @@ export function initFirebase() {
 
   const projectId   = process.env.FIREBASE_PROJECT_ID
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL
-  const privateKey  = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
+  const privateKey  = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n')
 
   console.info(`[Firebase] project=${projectId} email=${clientEmail?.substring(0,30)}... key=${privateKey ? 'OK' : 'MISSING'}`)
 
