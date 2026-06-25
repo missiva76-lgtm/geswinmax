@@ -34,12 +34,15 @@ async function loginWinmax(page: Page, config: any): Promise<void> {
   }, { user: config.utilizador || '', pass: config.password || '' })
 
   await page.waitForTimeout(300)
-  await page.evaluate(() => {
-    const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-    ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-  })
-  await page.waitForLoadState('networkidle')
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+    page.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+    })
+  ])
   await page.waitForTimeout(2000)
+  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 15000 })
 }
 
 // Abre uma listagem, muda para CSV e faz download
