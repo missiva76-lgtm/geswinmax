@@ -5,14 +5,22 @@ let initialized = false
 
 export function initFirebase() {
   if (initialized) return
+
+  const projectId   = process.env.FIREBASE_PROJECT_ID
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL
+  const privateKey  = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
+
+  console.info(`[Firebase] project=${projectId} email=${clientEmail?.substring(0,30)}... key=${privateKey ? 'OK' : 'MISSING'}`)
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error(`[Firebase] Credenciais em falta: project=${projectId} email=${clientEmail} key=${!!privateKey}`)
+  }
+
   admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId:   process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey:  process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    }),
+    credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
   })
   initialized = true
+  console.info('[Firebase] Inicializado com sucesso')
 }
 
 export const db = () => admin.firestore()
