@@ -1,4 +1,4 @@
-// services/firebase.ts — Firebase Admin SDK (sem Storage — PDFs servidos pelo Render)
+// services/firebase.ts — Firebase Admin SDK
 import * as admin from 'firebase-admin'
 
 let initialized = false
@@ -6,23 +6,37 @@ let initialized = false
 export function initFirebase() {
   if (initialized) return
 
+  // Tenta primeiro FIREBASE_SERVICE_ACCOUNT (JSON completo — mais robusto)
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT
+  if (serviceAccountJson) {
+    try {
+      const serviceAccount = JSON.parse(serviceAccountJson)
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) })
+      initialized = true
+      console.info(`[Firebase] Inicializado via FIREBASE_SERVICE_ACCOUNT (project=${serviceAccount.project_id})`)
+      return
+    } catch (e) {
+      console.error('[Firebase] Erro ao parsear FIREBASE_SERVICE_ACCOUNT:', e)
+    }
+  }
+
+  // Fallback: variáveis separadas
   const projectId   = process.env.FIREBASE_PROJECT_ID
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL
   const rawKey      = process.env.FIREBASE_PRIVATE_KEY || ''
-  // Converte \n literais em quebras de linha reais
-  const privateKey  = rawKey.includes('\\n') ? rawKey.split('\\n').join('\n') : rawKey
+  const privateKey  = rawKey.split('\\n').join('\n')
 
-  console.info(`[Firebase] project=${projectId} email=${clientEmail?.substring(0,30)}... keyLen=${privateKey.length} hasNewlines=${privateKey.includes('\n')}`)
+  console.info(`[Firebase] project=${projectId} keyLen=${privateKey.length} newlines=${(privateKey.match(/\n/g)||[]).length}`)
 
   if (!projectId || !clientEmail || !privateKey) {
-    throw new Error(`[Firebase] Credenciais em falta: project=${projectId} email=${clientEmail} key=${!!privateKey}`)
+    throw new Error(`[Firebase] Credenciais em falta`)
   }
 
   admin.initializeApp({
     credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
   })
   initialized = true
-  console.info('[Firebase] Inicializado com sucesso')
+  console.info('[Firebase] Inicializado via variáveis separadas')
 }
 
 export const db = () => admin.firestore()
