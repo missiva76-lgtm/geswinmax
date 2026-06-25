@@ -44,6 +44,7 @@ app.get('/health', (_req: express.Request, res: express.Response) => res.json({
 
 app.get('/debug-env', (_req: express.Request, res: express.Response) => {
   const key = process.env.FIREBASE_PRIVATE_KEY || ''
+  const keyAfter = key.includes('\\n') ? key.split('\\n').join('\n') : key
   res.json({
     project_id: process.env.FIREBASE_PROJECT_ID,
     client_email: process.env.FIREBASE_CLIENT_EMAIL,
@@ -54,6 +55,8 @@ app.get('/debug-env', (_req: express.Request, res: express.Response) => {
     has_end: key.includes('END PRIVATE KEY'),
     newline_count: (key.match(/\n/g) || []).length,
     literal_n_count: (key.match(/\\n/g) || []).length,
+    after_replace_newlines: (keyAfter.match(/\n/g) || []).length,
+    after_replace_starts: keyAfter.substring(0, 50),
   })
 })
 
