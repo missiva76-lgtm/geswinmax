@@ -8,9 +8,11 @@ export function initFirebase() {
 
   const projectId   = process.env.FIREBASE_PROJECT_ID
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL
-  const privateKey  = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n')
+  const rawKey      = process.env.FIREBASE_PRIVATE_KEY || ''
+  // Converte \n literais em quebras de linha reais
+  const privateKey  = rawKey.includes('\\n') ? rawKey.split('\\n').join('\n') : rawKey
 
-  console.info(`[Firebase] project=${projectId} email=${clientEmail?.substring(0,30)}... key=${privateKey ? 'OK' : 'MISSING'}`)
+  console.info(`[Firebase] project=${projectId} email=${clientEmail?.substring(0,30)}... keyLen=${privateKey.length} hasNewlines=${privateKey.includes('\n')}`)
 
   if (!projectId || !clientEmail || !privateKey) {
     throw new Error(`[Firebase] Credenciais em falta: project=${projectId} email=${clientEmail} key=${!!privateKey}`)
