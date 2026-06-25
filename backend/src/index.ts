@@ -42,6 +42,21 @@ app.get('/health', (_req: express.Request, res: express.Response) => res.json({
   timestamp: new Date().toISOString(),
 }))
 
+app.get('/debug-env', (_req: express.Request, res: express.Response) => {
+  const key = process.env.FIREBASE_PRIVATE_KEY || ''
+  res.json({
+    project_id: process.env.FIREBASE_PROJECT_ID,
+    client_email: process.env.FIREBASE_CLIENT_EMAIL,
+    key_length: key.length,
+    key_starts: key.substring(0, 30),
+    key_ends: key.substring(key.length - 30),
+    has_begin: key.includes('BEGIN PRIVATE KEY'),
+    has_end: key.includes('END PRIVATE KEY'),
+    newline_count: (key.match(/\n/g) || []).length,
+    literal_n_count: (key.match(/\\n/g) || []).length,
+  })
+})
+
 app.use('/api/jobs',    jobsRouter)
 app.use('/api/artigos', artigosRouter)
 app.use('/api/faturas', faturasRouter)
@@ -89,5 +104,17 @@ app.listen(PORT, async () => {
   logger.info(`\n╔══════════════════════════════════════╗`)
   logger.info(`║  GesWinmax Backend — porta ${PORT}       ║`)
   logger.info(`╚══════════════════════════════════════╝\n`)
-  await agendarSync()
+  try {
+    await agendarSync()
+  } catch (e) {
+    logger.error(`[Arranque] Erro ao agendar sync: ${e}`)
+  }
+})
+
+// Evita crash por erros não tratados — mantém o servidor vivo para diagnóstico
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason)
 })
