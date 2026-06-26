@@ -45,9 +45,9 @@ app.get('/health', (_req: express.Request, res: express.Response) => res.json({
 app.get('/debug-firestore', async (_req: express.Request, res: express.Response) => {
   try {
     const snap = await db().collection('config').doc('winmax').get()
-    res.json({ ok: true, exists: snap.exists, data: snap.data() })
+    res.json({ ok: true, exists: snap.exists, project: process.env.FIREBASE_PROJECT_ID })
   } catch (e: any) {
-    res.json({ ok: false, error: String(e), code: e.code, details: e.details })
+    res.json({ ok: false, error: String(e) })
   }
 })
 
