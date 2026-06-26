@@ -94,7 +94,13 @@ export class WinmaxRPA {
     if (!fs.existsSync(this.config.pastaDestinoPDF)) {
       fs.mkdirSync(this.config.pastaDestinoPDF, { recursive: true })
     }
-    this.browser = await chromium.launch({ headless: true, slowMo: 80 })
+    // Usa chromium em vez de chromium-headless-shell (mais compatível com Render)
+    this.browser = await chromium.launch({ 
+      headless: true, 
+      slowMo: 80,
+      channel: undefined,
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+    })
     this.context = await this.browser.newContext({
       locale: 'pt-PT',
       timezoneId: 'Europe/Lisbon',

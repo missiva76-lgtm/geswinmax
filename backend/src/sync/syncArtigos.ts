@@ -177,7 +177,7 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
   let browser: Browser | null = null
   try {
-    browser = await chromium.launch({ headless: true })
+    browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
     const context = await browser.newContext({
       locale: 'pt-PT', timezoneId: 'Europe/Lisbon', acceptDownloads: true,
       storageState: { cookies: [], origins: [] },
