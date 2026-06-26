@@ -14,9 +14,7 @@ export function initFirebase() {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       })
-      // Inicializa Firestore uma única vez com preferRest
       firestoreInstance = admin.firestore()
-      firestoreInstance.settings({ preferRest: true })
       initialized = true
       console.info(`[Firebase] Inicializado via FIREBASE_SERVICE_ACCOUNT (project=${serviceAccount.project_id})`)
       return
@@ -30,7 +28,7 @@ export function initFirebase() {
   const rawKey      = process.env.FIREBASE_PRIVATE_KEY || ''
   const privateKey  = rawKey.split('\\n').join('\n')
 
-  console.info(`[Firebase] project=${projectId} keyLen=${privateKey.length} newlines=${(privateKey.match(/\n/g)||[]).length}`)
+  console.info(`[Firebase] project=${projectId} keyLen=${privateKey.length}`)
 
   if (!projectId || !clientEmail || !privateKey) {
     throw new Error(`[Firebase] Credenciais em falta`)
@@ -40,7 +38,6 @@ export function initFirebase() {
     credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
   })
   firestoreInstance = admin.firestore()
-  firestoreInstance.settings({ preferRest: true })
   initialized = true
   console.info('[Firebase] Inicializado via variáveis separadas')
 }
