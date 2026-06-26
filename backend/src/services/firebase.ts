@@ -2,7 +2,7 @@
 import * as admin from 'firebase-admin'
 
 let initialized = false
-let app: admin.app.App | null = null
+let firestoreInstance: admin.firestore.Firestore | null = null
 
 export function initFirebase() {
   if (initialized) return
@@ -11,10 +11,12 @@ export function initFirebase() {
   if (serviceAccountJson) {
     try {
       const serviceAccount = JSON.parse(serviceAccountJson)
-      app = admin.initializeApp({
+      admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        databaseURL: `https://${serviceAccount.project_id}.firebaseio.com`,
       })
+      // Inicializa Firestore uma única vez com preferRest
+      firestoreInstance = admin.firestore()
+      firestoreInstance.settings({ preferRest: true })
       initialized = true
       console.info(`[Firebase] Inicializado via FIREBASE_SERVICE_ACCOUNT (project=${serviceAccount.project_id})`)
       return
@@ -34,19 +36,18 @@ export function initFirebase() {
     throw new Error(`[Firebase] Credenciais em falta`)
   }
 
-  app = admin.initializeApp({
+  admin.initializeApp({
     credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
-    databaseURL: `https://${projectId}.firebaseio.com`,
   })
+  firestoreInstance = admin.firestore()
+  firestoreInstance.settings({ preferRest: true })
   initialized = true
   console.info('[Firebase] Inicializado via variáveis separadas')
 }
 
 export const db = () => {
-  const firestore = admin.firestore()
-  // Força o uso do endpoint REST em vez de gRPC (evita problemas de rede no Render)
-  firestore.settings({ preferRest: true })
-  return firestore
+  if (!firestoreInstance) throw new Error('[Firebase] Firestore não inicializado')
+  return firestoreInstance
 }
 
 export async function updateJob(jobId: string, data: Record<string, unknown>) {
