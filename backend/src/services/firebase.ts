@@ -15,6 +15,11 @@ export function initFirebase() {
         credential: admin.credential.cert(serviceAccount),
       })
       firestoreInstance = admin.firestore()
+      // Usa REST se gRPC não funcionar (ex: Frankfurt no Render)
+      if (process.env.FIRESTORE_USE_REST === 'true') {
+        firestoreInstance.settings({ preferRest: true })
+        console.info('[Firebase] Firestore em modo REST')
+      }
       initialized = true
       console.info(`[Firebase] Inicializado via FIREBASE_SERVICE_ACCOUNT (project=${serviceAccount.project_id})`)
       return
@@ -28,8 +33,6 @@ export function initFirebase() {
   const rawKey      = process.env.FIREBASE_PRIVATE_KEY || ''
   const privateKey  = rawKey.split('\\n').join('\n')
 
-  console.info(`[Firebase] project=${projectId} keyLen=${privateKey.length}`)
-
   if (!projectId || !clientEmail || !privateKey) {
     throw new Error(`[Firebase] Credenciais em falta`)
   }
@@ -38,8 +41,11 @@ export function initFirebase() {
     credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
   })
   firestoreInstance = admin.firestore()
+  if (process.env.FIRESTORE_USE_REST === 'true') {
+    firestoreInstance.settings({ preferRest: true })
+  }
   initialized = true
-  console.info('[Firebase] Inicializado via variáveis separadas')
+  console.info(`[Firebase] Inicializado (project=${projectId})`)
 }
 
 export const db = () => {
