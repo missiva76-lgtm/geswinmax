@@ -4,3 +4,5 @@ dist/
 .env.local
 *.log
 .DS_Store
+"backend/serviceAccount.json.json" 
+"backend/*.json.json" 
