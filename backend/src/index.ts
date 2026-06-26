@@ -42,6 +42,15 @@ app.get('/health', (_req: express.Request, res: express.Response) => res.json({
   timestamp: new Date().toISOString(),
 }))
 
+app.get('/debug-firestore', async (_req: express.Request, res: express.Response) => {
+  try {
+    const snap = await db().collection('config').doc('winmax').get()
+    res.json({ ok: true, exists: snap.exists, data: snap.data() })
+  } catch (e: any) {
+    res.json({ ok: false, error: String(e), code: e.code, details: e.details })
+  }
+})
+
 app.get('/debug-env', (_req: express.Request, res: express.Response) => {
   const key = process.env.FIREBASE_PRIVATE_KEY || ''
   const keyAfter = key.includes('\\n') ? key.split('\\n').join('\n') : key
