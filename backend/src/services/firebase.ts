@@ -34,7 +34,12 @@ export function initFirebase() {
   const projectId   = process.env.FIREBASE_PROJECT_ID
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL
   const rawKey      = process.env.FIREBASE_PRIVATE_KEY || ''
-  const privateKey  = rawKey.split('\\n').join('\n')
+  // Converte \n literais em newlines reais (independentemente do formato)
+  const privateKey  = rawKey.includes('\\n') 
+    ? rawKey.split('\\n').join('\n')
+    : rawKey  // já tem newlines reais
+  
+  console.info(`[Firebase] key starts: ${privateKey.substring(0,30)} newlines: ${(privateKey.match(/\n/g)||[]).length}`)
 
   if (!projectId || !clientEmail || !privateKey) {
     throw new Error(`[Firebase] Credenciais em falta`)
