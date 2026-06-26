@@ -11,11 +11,14 @@ export function initFirebase() {
   if (serviceAccountJson) {
     try {
       const serviceAccount = JSON.parse(serviceAccountJson)
+      // Garante que private_key tem newlines reais (não literais \n)
+      if (serviceAccount.private_key) {
+        serviceAccount.private_key = serviceAccount.private_key.split('\\n').join('\n')
+      }
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       })
       firestoreInstance = admin.firestore()
-      // Usa REST se gRPC não funcionar (ex: Frankfurt no Render)
       if (process.env.FIRESTORE_USE_REST === 'true') {
         firestoreInstance.settings({ preferRest: true })
         console.info('[Firebase] Firestore em modo REST')
