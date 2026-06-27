@@ -44,7 +44,7 @@ export default function Emissao() {
           pdfsBaixados.current.add(f.pdf_url)
           const a = document.createElement('a')
           a.href = f.pdf_url
-          a.download = `${f.numero_documento || f.fatura_id}.pdf`
+          a.download = `${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`
           document.body.appendChild(a)
           a.click()
           document.body.removeChild(a)
@@ -204,7 +204,8 @@ export default function Emissao() {
                       <span className="text-gray-300 ml-1 text-xs">({f.fatura_id})</span>
                     </div>
                     {f.pdf_url && (
-                      <a href={f.pdf_url} download
+                      <a href={f.pdf_url}
+                        download={`${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`}
                         className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs shrink-0"
                         title="Descarregar PDF">
                         PDF <ExternalLink size={11}/>

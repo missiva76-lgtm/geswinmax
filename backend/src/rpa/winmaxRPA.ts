@@ -400,8 +400,11 @@ export class WinmaxRPA {
 
   private async adicionarComentario(comentario: string): Promise<void> {
     const di = 'DocumentIssue_content'
-    const tem = await this.evalIn(di,
-      `!!document.querySelector('input[id^="DetailPropertyRemarks"]')`) as boolean
+    // Verifica se existe botão de comentário via page.evaluate (mais robusto que evalIn)
+    const tem = await this.page!.evaluate(() => {
+      const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+      return !!f?.contentDocument?.querySelector('input[id^="DetailPropertyRemarks"]')
+    }).catch(() => false)
     if (!tem) { await this.log('  💬 Artigo sem textarea de comentário'); return }
 
     // Aguarda que o overlay_modal desapareça antes de clicar
@@ -586,7 +589,8 @@ export class WinmaxRPA {
       index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
       tipo_documento: fatura.tipo_documento, sucesso: true,
       numero_documento: numDoc,
-      pdf_url: localPDF,   // substituído por URL Firebase Storage no job handler
+      pdf_url: localPDF,
+      total: fatura.linhas.reduce((s, l) => s + (l.preco_unitario * l.quantidade * (1 - (l.desconto_pct || 0) / 100)), 0),
       total_linhas: fatura.linhas.length, linhas_ok: fatura.linhas.length,
       duracao_ms: Date.now() - inicio,
     }

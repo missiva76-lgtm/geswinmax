@@ -122,10 +122,11 @@ export default function Historico() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Nº Documento</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Tipo</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Nº Documento</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Data emissão</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Cliente</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500">Total</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Estado</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">PDF</th>
               </tr>
@@ -133,17 +134,20 @@ export default function Historico() {
             <tbody>
               {filtradas.map((f, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-800">
-                    {f.numero_documento || f.fatura_id || '—'}
-                  </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${TIPO_COR[f.tipo_documento] || 'bg-gray-100 text-gray-600'}`}>
                       {f.tipo_documento || '—'}
                     </span>
                   </td>
+                  <td className="px-4 py-3 font-medium text-gray-800">
+                    {f.numero_documento || f.fatura_id || '—'}
+                  </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{fmt(f)}</td>
                   <td className="px-4 py-3 text-gray-600 truncate max-w-[200px]">
                     {f.cliente_nome || f.cliente_codigo || '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right text-gray-700 text-sm font-medium">
+                    {(f as any).total != null ? `${Number((f as any).total).toFixed(2).replace('.', ',')} €` : '—'}
                   </td>
                   <td className="px-4 py-3">
                     {f.sucesso
@@ -153,7 +157,8 @@ export default function Historico() {
                   </td>
                   <td className="px-4 py-3">
                     {f.pdf_url
-                      ? <a href={f.pdf_url} download
+                      ? <a href={f.pdf_url}
+                          download={`${f.tipo_documento}_${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`}
                           className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs">
                           <FileText size={12}/> PDF
                         </a>
