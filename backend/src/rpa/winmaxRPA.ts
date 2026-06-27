@@ -292,27 +292,22 @@ export class WinmaxRPA {
       s.dispatchEvent(new Event('change', { bubbles: true }));
     `)
 
-    // Aguarda o postback ASP.NET completar:
-    // 1. Espera que o iframe fique loading (postback iniciou)
-    // 2. Espera que volte a complete (postback terminou)
+    // Aguarda o postback ASP.NET completar — espera que o valor mude para o correto
     await this.page!.waitForFunction(
-      (id: string) => {
+      ({ id, val }: { id: string; val: string }) => {
         const f = document.getElementById(id) as HTMLIFrameElement
-        return f?.contentDocument?.readyState === 'loading'
+        const doc = f?.contentDocument
+        if (!doc || doc.readyState !== 'complete') return false
+        const s = doc.getElementById('ddlDocumentType') as HTMLSelectElement
+        return s?.value === val
       },
-      di,
-      { timeout: 8000, polling: 200 }
-    ).catch(() => { /* pode não apanhar o loading se for muito rápido */ })
-
-    await this.page!.waitForFunction(
-      (id: string) => {
-        const f = document.getElementById(id) as HTMLIFrameElement
-        return f?.contentDocument?.readyState === 'complete' &&
-               !!f?.contentDocument?.getElementById('ddlDocumentType')
-      },
-      di,
-      { timeout: 15000, polling: 300 }
-    )
+      { id: di, val: tipoVal },
+      { timeout: 20000, polling: 400 }
+    ).catch(async () => {
+      // Se timeout, verifica o valor atual
+      const val = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || '?'`)
+      await this.log(`  ⚠️ Timeout aguardando tipo ${tipoVal}, valor atual: ${val}`)
+    })
     await this.page!.waitForTimeout(400)
 
     // Confirma o tipo após postback
@@ -447,6 +442,7 @@ export class WinmaxRPA {
     // O WinMax4 usa DocumentIssueClose_content para terminar+imprimir
     await this.log('  🖨️ A aguardar iframe de fecho do documento...')
     await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 15000)
+    await this.page!.waitForTimeout(500)
 
     // Seleciona template PDF se configurado
     if (this.config.templatePDF) {
@@ -458,25 +454,38 @@ export class WinmaxRPA {
       await this.page!.waitForTimeout(500)
     }
 
-    // Clica Confirmar — termina o documento e abre o viewer PDF
+    // Clica Confirmar — verifica também se precisa de confirmar documento com total zero
     await this.page!.evaluate(() => {
       const f = document.getElementById('DocumentIssueClose_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      const doc = f?.contentDocument
+      // Verifica se há link especial para total zero
+      const totalZero = doc?.getElementById('lbConfirmCloseDocumentWithTotalZero') as HTMLElement
+      if (totalZero && totalZero.offsetParent !== null) {
+        totalZero.click()
+      } else {
+        ;(doc?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      }
     })
-    await this.page!.waitForTimeout(3000)
+    await this.page!.waitForTimeout(5000)
 
-    // Captura o URL do Download.aspx a partir do iframe viewer gerado
+    // Captura o URL do Download.aspx — aguarda até 10s que o viewer apareça
     try {
-      const downloadUrl = await this.page!.evaluate(() => {
-        const iframes = Array.from(document.querySelectorAll('iframe'))
-        const viewer = iframes.find(f => f.src?.includes('Download.aspx'))
-        return viewer?.src || null
-      })
+      let downloadUrl: string | null = null
+      for (let i = 0; i < 10; i++) {
+        downloadUrl = await this.page!.evaluate(() => {
+          const iframes = Array.from(document.querySelectorAll('iframe'))
+          const viewer = iframes.find(f => f.src?.includes('Download.aspx'))
+          return viewer?.src || null
+        })
+        if (downloadUrl) break
+        await this.page!.waitForTimeout(1000)
+      }
 
       if (!downloadUrl) {
-        await this.log('  ⚠️  PDF: URL de download não encontrado')
+        await this.log('  ⚠️  PDF: URL de download não encontrado após 10s')
         return ''
       }
+      await this.log(`  🖨️  PDF URL encontrado`)
 
       // Faz fetch do PDF usando as cookies da sessão Playwright
       const cookies = await this.page!.context().cookies()
