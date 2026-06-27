@@ -284,33 +284,25 @@ export class WinmaxRPA {
     const di = 'DocumentIssue_content'
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
 
-    // Muda tipo de documento — tenta até 3 vezes se necessário
-    let tipoOk = false
-    for (let tentativa = 1; tentativa <= 3; tentativa++) {
-      await this.evalIn(di, `
-        const s = document.getElementById('ddlDocumentType');
-        s.value = '${tipoVal}';
-        s.dispatchEvent(new Event('change', { bubbles: true }));
-      `)
-      // Aguarda postback completar (até 15s por tentativa)
-      tipoOk = await this.page!.waitForFunction(
-        ({ id, val }: { id: string; val: string }) => {
-          const f = document.getElementById(id) as HTMLIFrameElement
-          const doc = f?.contentDocument
-          if (!doc || doc.readyState !== 'complete') return false
-          const s = doc.getElementById('ddlDocumentType') as HTMLSelectElement
-          return s?.value === val
-        },
-        { id: di, val: tipoVal },
-        { timeout: 15000, polling: 300 }
-      ).then(() => true).catch(() => false)
-
-      if (tipoOk) break
-      await this.log(`  ⚠️ Tentativa ${tentativa}/3 — tipo ainda não mudou, a repetir...`)
-      await this.page!.waitForTimeout(1000)
-    }
+    // Muda tipo de documento via frameLocator (mais fiável no Playwright headless)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#ddlDocumentType')
+      .selectOption(tipoVal)
+    
+    // Aguarda postback completar — espera que o valor seja confirmado
+    const tipoOk = await this.page!.waitForFunction(
+      ({ id, val }: { id: string; val: string }) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const doc = f?.contentDocument
+        if (!doc || doc.readyState !== 'complete') return false
+        const s = doc.getElementById('ddlDocumentType') as HTMLSelectElement
+        return s?.value === val
+      },
+      { id: di, val: tipoVal },
+      { timeout: 20000, polling: 300 }
+    ).then(() => true).catch(() => false)
+    
     await this.page!.waitForTimeout(500)
-
     const tipoAtual = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || ''`)
     await this.log(`  📄 Tipo documento: ${fatura.tipo_documento} (val=${tipoAtual})${tipoOk ? '' : ' ⚠️ não confirmado'}`)
 
@@ -440,7 +432,7 @@ export class WinmaxRPA {
     await this.log('  💬 Comentário adicionado')
   }
 
-  private async imprimirEGuardarPDF(numPrevisto: string): Promise<string> {
+  private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = ''): Promise<string> {
     // O WinMax4 usa DocumentIssueClose_content para terminar+imprimir
     await this.log('  🖨️ A aguardar iframe de fecho do documento...')
     await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 15000)
@@ -496,7 +488,7 @@ export class WinmaxRPA {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
 
       const buffer = Buffer.from(await resp.arrayBuffer())
-      const nomeSeguro = numPrevisto.replace(/[\/\\:*?"<>|]/g, '_')
+      const nomeSeguro = `${tipDoc ? tipDoc + '_' : ''}${numPrevisto}`.replace(/[\/\\:*?"<>|]/g, '_')
       const destino = path.join(this.config.pastaDestinoPDF || '/tmp/pdfs', `${nomeSeguro}.pdf`)
       fs.mkdirSync(path.dirname(destino), { recursive: true })
       fs.writeFileSync(destino, buffer)
@@ -534,7 +526,7 @@ export class WinmaxRPA {
     await this.log('  ✅ A terminar documento...')
 
     // imprimirEGuardarPDF aguarda o DocumentIssueClose_content e clica Confirmar
-    const localPDF = await this.imprimirEGuardarPDF(numPrevisto)
+    const localPDF = await this.imprimirEGuardarPDF(numPrevisto, fatura.tipo_documento)
 
     const numDoc = await this.evalIn(di,
       `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
