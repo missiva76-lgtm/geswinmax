@@ -444,31 +444,23 @@ export class WinmaxRPA {
   }
 
   private async imprimirEGuardarPDF(numPrevisto: string): Promise<string> {
-    const di = 'DocumentIssue_content'
+    // O WinMax4 usa DocumentIssueClose_content para terminar+imprimir
+    await this.log('  🖨️ A aguardar iframe de fecho do documento...')
+    await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 15000)
 
-    // Seleciona opção "Imprimir" no menu moderno
-    await this.evalIn(di, `
-      const hf = document.getElementById('wucModernMenu_hfSelectedOption');
-      if (hf) hf.value = '${MENU.imprimir}';
-      const lb = document.getElementById('wucModernMenu_lbSelectOption');
-      if (lb) lb.click();
-    `)
-    await this.page!.waitForTimeout(2000)
-    await this.waitFor('DocumentIssuePrint_content', SEL.printReport, 20000)
-
-    // Seleciona template PDF (usa o que estiver selecionado por defeito se não configurado)
+    // Seleciona template PDF se configurado
     if (this.config.templatePDF) {
       await this.page!.evaluate(({ tpl }) => {
-        const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
+        const f = document.getElementById('DocumentIssueClose_content') as HTMLIFrameElement
         const ddl = f?.contentDocument?.getElementById('ddlPrintReportName') as HTMLSelectElement
         if (ddl) { ddl.value = tpl; ddl.dispatchEvent(new Event('change', { bubbles: true })) }
       }, { tpl: this.config.templatePDF })
       await this.page!.waitForTimeout(500)
     }
 
-    // Clica Confirmar e aguarda o viewer de PDF aparecer
+    // Clica Confirmar — termina o documento e abre o viewer PDF
     await this.page!.evaluate(() => {
-      const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
+      const f = document.getElementById('DocumentIssueClose_content') as HTMLIFrameElement
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
     await this.page!.waitForTimeout(3000)
@@ -523,13 +515,15 @@ export class WinmaxRPA {
       await this.log('  ✖️  Linha vazia cancelada')
     }
 
-    const localPDF = await this.imprimirEGuardarPDF(numPrevisto)
-
-    // Clica "Terminar" diretamente (botão wucButtonClose_linkButton1)
+    // Clica "Terminar" — abre DocumentIssueClose_content com opções de impressão
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#wucButtonClose_linkButton1')
       .click()
-    await this.page!.waitForTimeout(2000)
+    await this.page!.waitForTimeout(1500)
+    await this.log('  ✅ A terminar documento...')
+
+    // imprimirEGuardarPDF aguarda o DocumentIssueClose_content e clica Confirmar
+    const localPDF = await this.imprimirEGuardarPDF(numPrevisto)
 
     const numDoc = await this.evalIn(di,
       `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
