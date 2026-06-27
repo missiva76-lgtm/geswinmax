@@ -29,6 +29,7 @@ export interface ResultadoFatura {
   sucesso: boolean
   numero_documento?: string
   pdf_url?: string
+  total?: number
   total_linhas: number
   linhas_ok: number
   erro?: string
