@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, Loader2, ExternalLink, Download } from 'lucide-react'
 import { uploadExcel } from '../services/api'
 import { useJob } from '../hooks/useJob'
@@ -34,6 +34,24 @@ export default function Emissao() {
   const faturas: FaturaResultado[] = job?.resultado?.faturas || []
   const emitidas = faturas.filter(f => f.sucesso)
   const comErro  = faturas.filter(f => !f.sucesso)
+
+  // Download automático dos PDFs quando job conclui com sucesso
+  const pdfsBaixados = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (job?.estado === 'concluido') {
+      emitidas.forEach(f => {
+        if (f.pdf_url && !pdfsBaixados.current.has(f.pdf_url)) {
+          pdfsBaixados.current.add(f.pdf_url)
+          const a = document.createElement('a')
+          a.href = f.pdf_url
+          a.download = `${f.numero_documento || f.fatura_id}.pdf`
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+        }
+      })
+    }
+  }, [job?.estado])
 
   return (
     <div>
@@ -183,8 +201,9 @@ export default function Emissao() {
                       <span className="text-gray-300 ml-1 text-xs">({f.fatura_id})</span>
                     </div>
                     {f.pdf_url && (
-                      <a href={f.pdf_url} target="_blank" rel="noreferrer"
-                        className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs shrink-0">
+                      <a href={f.pdf_url} download
+                        className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs shrink-0"
+                        title="Descarregar PDF">
                         PDF <ExternalLink size={11}/>
                       </a>
                     )}

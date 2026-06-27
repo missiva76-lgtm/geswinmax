@@ -284,35 +284,35 @@ export class WinmaxRPA {
     const di = 'DocumentIssue_content'
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
 
-    // Muda tipo de documento via dispatchEvent change
-    // (__doPostBack falha mesmo em script injetado porque o ScriptManager usa arguments internamente)
-    await this.evalIn(di, `
-      const s = document.getElementById('ddlDocumentType');
-      s.value = '${tipoVal}';
-      s.dispatchEvent(new Event('change', { bubbles: true }));
-    `)
+    // Muda tipo de documento — tenta até 3 vezes se necessário
+    let tipoOk = false
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      await this.evalIn(di, `
+        const s = document.getElementById('ddlDocumentType');
+        s.value = '${tipoVal}';
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+      `)
+      // Aguarda postback completar (até 15s por tentativa)
+      tipoOk = await this.page!.waitForFunction(
+        ({ id, val }: { id: string; val: string }) => {
+          const f = document.getElementById(id) as HTMLIFrameElement
+          const doc = f?.contentDocument
+          if (!doc || doc.readyState !== 'complete') return false
+          const s = doc.getElementById('ddlDocumentType') as HTMLSelectElement
+          return s?.value === val
+        },
+        { id: di, val: tipoVal },
+        { timeout: 15000, polling: 300 }
+      ).then(() => true).catch(() => false)
 
-    // Aguarda o postback ASP.NET completar — espera que o valor mude para o correto
-    await this.page!.waitForFunction(
-      ({ id, val }: { id: string; val: string }) => {
-        const f = document.getElementById(id) as HTMLIFrameElement
-        const doc = f?.contentDocument
-        if (!doc || doc.readyState !== 'complete') return false
-        const s = doc.getElementById('ddlDocumentType') as HTMLSelectElement
-        return s?.value === val
-      },
-      { id: di, val: tipoVal },
-      { timeout: 20000, polling: 400 }
-    ).catch(async () => {
-      // Se timeout, verifica o valor atual
-      const val = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || '?'`)
-      await this.log(`  ⚠️ Timeout aguardando tipo ${tipoVal}, valor atual: ${val}`)
-    })
-    await this.page!.waitForTimeout(400)
+      if (tipoOk) break
+      await this.log(`  ⚠️ Tentativa ${tentativa}/3 — tipo ainda não mudou, a repetir...`)
+      await this.page!.waitForTimeout(1000)
+    }
+    await this.page!.waitForTimeout(500)
 
-    // Confirma o tipo após postback
     const tipoAtual = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || ''`)
-    await this.log(`  📄 Tipo documento: ${fatura.tipo_documento} (val=${tipoAtual})`)
+    await this.log(`  📄 Tipo documento: ${fatura.tipo_documento} (val=${tipoAtual})${tipoOk ? '' : ' ⚠️ não confirmado'}`)
 
     // Preenche código do cliente usando frameLocator do Playwright (mais fiável que evalIn para inputs)
     const frame = this.page!.frameLocator(`#${di}`)
@@ -361,23 +361,25 @@ export class WinmaxRPA {
     if (erroArtigo) throw new ErroLinhaArtigo(n, linha.artigo_ref,
       `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
 
-    // Preço (vem do Excel)
-    await this.evalIn(di, `
-      const p = document.getElementById('txtUnitaryPrice');
-      p.value = '${String(linha.preco_unitario).replace('.', ',')}';
-      p.dispatchEvent(new Event('change', { bubbles: true }));
-      p.dispatchEvent(new Event('blur', { bubbles: true }));
-    `)
-    await this.page!.waitForTimeout(200)
+    // Preço via frameLocator (mais fiável)
+    const precoStr = String(linha.preco_unitario).replace('.', ',')
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtUnitaryPrice')
+      .fill(precoStr)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtUnitaryPrice')
+      .press('Tab')
+    await this.page!.waitForTimeout(300)
 
-    // Quantidade (vem do Excel)
-    await this.evalIn(di, `
-      const q = document.getElementById('txtQuantity');
-      q.value = '${String(linha.quantidade).replace('.', ',')}';
-      q.dispatchEvent(new Event('change', { bubbles: true }));
-      q.dispatchEvent(new Event('blur', { bubbles: true }));
-    `)
-    await this.page!.waitForTimeout(200)
+    // Quantidade via frameLocator
+    const qtdStr = String(linha.quantidade).replace('.', ',')
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtQuantity')
+      .fill(qtdStr)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtQuantity')
+      .press('Tab')
+    await this.page!.waitForTimeout(300)
 
     // Desconto (vem do Excel)
     if (linha.desconto_pct > 0) {
