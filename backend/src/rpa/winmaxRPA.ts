@@ -528,9 +528,18 @@ export class WinmaxRPA {
     // imprimirEGuardarPDF aguarda o DocumentIssueClose_content e clica Confirmar
     const localPDF = await this.imprimirEGuardarPDF(numPrevisto, fatura.tipo_documento)
 
-    const numDoc = await this.evalIn(di,
+    // Tenta obter número do documento — do iframe ou do nome do PDF
+    let numDoc = await this.evalIn(di,
       `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
     ).catch(() => '') as string
+
+    // Se não conseguiu do iframe, extrai do nome do PDF
+    if (!numDoc && localPDF) {
+      const nomePDF = path.basename(localPDF, '.pdf')
+      // Remove o prefixo do tipo (ex: FRB_ → 2026_85 → 2026/85)
+      const semTipo = nomePDF.replace(/^[A-Z]+_/, '')
+      numDoc = semTipo.replace('_', '/') // 2026_85 → 2026/85
+    }
 
     // Renomeia o PDF com o número definitivo
     if (localPDF && numDoc && numDoc !== numPrevisto) {

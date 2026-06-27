@@ -56,7 +56,10 @@ export default function Emissao() {
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-900 mb-1">Emissão de faturas</h2>
-      <p className="text-sm text-gray-500 mb-6">Deposita o ficheiro Excel para iniciar o processamento automático.</p>
+      <p className="text-sm text-gray-500 mb-2">Deposita o ficheiro Excel para iniciar o processamento automático.</p>
+      <p className="text-xs text-blue-500 mb-6">
+        💡 Para PDFs guardados automaticamente em <strong>C:\PDF</strong>: Chrome → Definições → Transferências → desativa "Perguntar onde guardar cada ficheiro" e define a pasta como <strong>C:\PDF</strong>
+      </p>
 
       {!jobId && (
         <>
