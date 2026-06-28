@@ -226,12 +226,18 @@ export async function syncWinmax(jobId?: string): Promise<void> {
         const codigo = a['ArticleCode'] || a['Code'] || a['Código'] || a['Artigo'] || a['Ref'] || a['Referência'] || Object.values(a)[0]
         if (!codigo) return []
         return [{ col: 'artigos', id: String(codigo).replace(/[\/\\]/g,'_'), data: {
-          codigo:      String(codigo),
-          descricao:   a['ArticleDesignation'] || a['Designation'] || a['Designação'] || a['Descrição'] || a['Nome'] || '',
-          taxa_iva:    parseFloat((a['VATRate'] || a['IVA'] || a['Taxa IVA'] || '23').replace(',','.').replace('%','')) || 23,
-          preco_venda: parseFloat((a['SalePrice'] || a['Price'] || a['PVP'] || a['Preço'] || '0').replace(',','.')) || 0,
-          existencias: parseFloat((a['Stock'] || a['Existences'] || a['Existências'] || a['Qtd'] || '0').replace(',','.')) || 0,
-          ultima_sync: now,
+          codigo:        String(codigo),
+          descricao:     a['ArticleDesignation'] || '',
+          familia:       a['FamilyDesignation'] || '',
+          sub_familia:   a['SubFamilyDesignation'] || '',
+          tipo:          a['ArticleType'] || '',
+          ativo:         a['IsActive'] === 'True' || a['IsActive'] === '1',
+          unidade:       a['StockUnitCode'] || '',
+          stock:         parseFloat((a['CurrentStock'] || '0').replace(',','.')) || 0,
+          preco_custo:   parseFloat((a['NetCostPrice'] || '0').replace(',','.')) || 0,
+          preco_venda:   parseFloat((a['SalePrice1WithoutTaxesFees'] || '0').replace(',','.')) || 0,
+          preco_venda2:  parseFloat((a['SalePrice2WithoutTaxesFees'] || '0').replace(',','.')) || 0,
+          ultima_sync:   now,
         }}]
       })
       await commitBatches(ops)
@@ -255,17 +261,18 @@ export async function syncWinmax(jobId?: string): Promise<void> {
         const id = `${v['DocumentID'] || v['Nº Doc'] || v['Documento'] || ''}_${v['DocumentDate'] || v['Data'] || ''}`.replace(/[\/\\]/g,'_')
         if (!id || id === '_') return []
         return [{ col: 'movimentos_venda', id, data: {
-          data:            v['DocumentDate'] || v['Data'] || '',
-          numero_doc:      v['DocumentNumber'] || v['Nº Doc'] || v['Documento'] || '',
-          tipo_doc:        v['DocumentCode'] || v['Tipo'] || '',
-          cliente_codigo:  v['EntityCode'] || v['Cód. Cliente'] || v['Cliente'] || '',
-          cliente_nome:    v['EntityName'] || v['Nome'] || v['Entidade'] || '',
-          artigo_codigo:   v['ArticleCode'] || v['Artigo'] || v['Código'] || '',
-          artigo_descricao:v['ArticleDesignation'] || v['Descrição'] || v['Designação'] || '',
-          quantidade:      parseFloat((v['Quantity'] || v['Qtd'] || v['Quantidade'] || '0').replace(',','.')) || 0,
-          preco_unitario:  parseFloat((v['UnitaryPrice'] || v['Preço'] || v['PVP'] || '0').replace(',','.')) || 0,
-          total:           parseFloat((v['TotalNetValue'] || v['Total'] || v['Líquido'] || v['Valor'] || '0').replace(',','.')) || 0,
-          ultima_sync: now,
+          data:            v['DocumentDate'] || '',
+          numero_doc:      v['DocumentNumber'] || '',
+          numero_doc_order:v['DocumentNumberForOrder'] || '',
+          tipo_doc:        v['DocumentCode'] || '',
+          cliente_codigo:  v['CustomerCode'] || '',
+          cliente_nome:    v['CustomerName'] || '',
+          cliente_nif:     v['CustomerTaxPayerNumber'] || '',
+          total:           parseFloat((v['Total'] || '0').replace(',','.')) || 0,
+          total_sem_iva:   parseFloat((v['TotalWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
+          total_iva:       parseFloat((v['TotalTaxesApplied'] || '0').replace(',','.')) || 0,
+          moeda:           v['CurrencyCode'] || 'EUR',
+          ultima_sync:     now,
         }}]
       })
       await log(`  → ${ops.length} ops geradas para Firestore`)
