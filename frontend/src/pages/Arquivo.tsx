@@ -99,8 +99,7 @@ export default function Arquivo() {
               <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Nº Documento</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Tipo</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Data</th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Cliente</th>
-              <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total</th>
+              <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Ficheiro</th>
               <th className="text-center px-4 py-2.5 text-xs font-medium text-gray-500">PDF</th>
             </tr>
           </thead>
@@ -120,25 +119,16 @@ export default function Arquivo() {
             {docs.map((doc) => (
               <tr key={doc.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-2.5 font-mono text-xs font-medium text-gray-800">
-                  {doc.numero_documento}
+                  {doc.numero_documento || doc.informacao?.split('\n')[0] || '—'}
                 </td>
                 <td className="px-4 py-2.5">
                   <span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full">
-                    {doc.tipo_documento}
+                    {doc.tipo_documento || '—'}
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-xs text-gray-600">{doc.data}</td>
-                <td className="px-4 py-2.5">
-                  <div className="text-gray-800 text-xs">{doc.cliente_nome}</div>
-                  {doc.cliente_codigo && (
-                    <div className="text-gray-400 text-xs">{doc.cliente_codigo}</div>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <div className="text-xs font-medium text-gray-800">{fmt(doc.total_liquido)}</div>
-                  {doc.iva > 0 && (
-                    <div className="text-xs text-gray-400">IVA: {fmt(doc.iva)}</div>
-                  )}
+                <td className="px-4 py-2.5 text-xs text-gray-500 truncate max-w-[200px]" title={doc.ficheiro}>
+                  {doc.ficheiro || '—'}
                 </td>
                 <td className="px-4 py-2.5 text-center">
                   {doc.pdf_url ? (
