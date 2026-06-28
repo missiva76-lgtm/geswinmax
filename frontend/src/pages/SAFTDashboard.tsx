@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { TrendingUp, Users, Package, Euro, RefreshCw, Calendar } from 'lucide-react'
 import { triggerSyncArquivo } from '../services/api'
+import ServerWakingBanner from '../components/ServerWakingBanner'
 
 const API = import.meta.env.VITE_API_URL || '/api'
 
@@ -67,10 +68,11 @@ export default function SAFTDashboard() {
   const [diInput, setDiInput]   = useState('')
   const [dfInput, setDfInput]   = useState('')
   const [tab, setTab]           = useState<'vendas' | 'clientes' | 'artigos'>('vendas')
+  const [serverError, setServerError] = useState<Error | null>(null)
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/saft`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/saft`).then(r => r.json()).catch((e) => { setServerError(e); return [] }),
       fetch(`${API}/saft/mensal`).then(r => r.json()).catch(() => []),
     ]).then(([r, m]) => {
       setResumos(r)
@@ -78,6 +80,8 @@ export default function SAFTDashboard() {
       setLoading(false)
     })
   }, [])
+
+  const recarregar = () => { setServerError(null); setLoading(true) }
 
   const handleSync = async () => {
     setSyncing(true)
