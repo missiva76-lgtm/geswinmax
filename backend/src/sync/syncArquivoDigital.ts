@@ -262,9 +262,20 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
         // Guarda metadados sem descarregar PDF (demasiado lento para todos os documentos)
         // O PDF pode ser descarregado on-demand via /api/arquivo/:id/pdf
         const docId = linha.ficheiro.replace(/[.\/\\]/g, '_')
+        // Converte data "31/12/2025 21:03:52" para timestamp
+        let dataTs: admin.firestore.Timestamp | null = null
+        try {
+          const [datePart, timePart] = (linha.data || '').split(' ')
+          const [d, m, y] = (datePart || '').split('/')
+          if (d && m && y) {
+            dataTs = admin.firestore.Timestamp.fromDate(new Date(`${y}-${m}-${d}T${timePart || '00:00:00'}`))
+          }
+        } catch { /**/ }
+
         await db().collection('arquivo').doc(docId).set({
           ...linha,
           pdf_url:      null,
+          data_ts:      dataTs,
           importado_em: admin.firestore.FieldValue.serverTimestamp(),
           fonte:        'arquivo_digital_winmax',
         }, { merge: true })

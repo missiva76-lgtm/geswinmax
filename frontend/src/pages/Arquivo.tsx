@@ -81,11 +81,8 @@ export default function Arquivo() {
     return true
   })
 
-  // URL de download do PDF via backend
-  const pdfDownloadUrl = (ficheiro: string) => {
-    if (!ficheiro) return null
-    return `https://geswinmax-backend-8oo6.onrender.com/api/arquivo/pdf/${encodeURIComponent(ficheiro)}`
-  }
+  // PDF disponível apenas no WinMax4 (requer sessão autenticada)
+  const pdfDownloadUrl = (_ficheiro: string) => null
 
   return (
     <div className="flex-1 overflow-auto p-6">
