@@ -112,24 +112,30 @@ async function exportarSAFT(page: Page, dataInicio: string, dataFim: string): Pr
     () => {
       const prog = document.getElementById('utilsExportSAFTFileProgressWindowID_content') as HTMLIFrameElement
       const msg  = prog?.contentDocument?.getElementById('lblMessage')?.innerText?.trim() || ''
-      return msg.includes('sucesso')
+      return msg.includes('sucesso') || msg.includes('conclu') || msg.includes('gerado')
     },
     { timeout: 60000 }
   )
+  await page.waitForTimeout(1000)
 
-  // Obtém o nome do ficheiro gerado
-  const nomeFicheiro = await page.evaluate(() => {
+  // Captura URL de download enquanto o ProgressBox ainda está aberto
+  const urlDownload = await page.evaluate(() => {
     const prog = document.getElementById('utilsExportSAFTFileProgressWindowID_content') as HTMLIFrameElement
-    const doc  = prog?.contentDocument
-    // Clica "<<<" para ver o texto extendido
-    ;(doc?.getElementById('wucButtonShowHideExtendedText_buttonText') as HTMLElement)?.closest('a')?.click()
-    return ''
-  })
+    const links = Array.from(prog?.contentDocument?.querySelectorAll('a') || []) as HTMLAnchorElement[]
+    const link = links.find(a => a.href?.includes('Download.aspx'))
+    return link?.href || null
+  }).catch(() => null)
+
+  // Guarda o URL no window para acesso posterior
+  if (urlDownload) {
+    await page.evaluate((url: string) => { (window as any).__saftDownloadUrl = url }, urlDownload)
+  }
 
   // Tenta obter o nome do ficheiro do ProgressBox
   const nomeDoProgress = await page.evaluate(() => {
     const prog = document.getElementById('utilsExportSAFTFileProgressWindowID_content') as HTMLIFrameElement
-    const txt = prog?.contentDocument?.getElementById('lblExtendedText')?.innerText?.trim() || ''
+    const txt = prog?.contentDocument?.getElementById('lblExtendedText')?.innerText?.trim() ||
+                prog?.contentDocument?.getElementById('lblMessage')?.innerText?.trim() || ''
     const m = txt.match(/SAF-T[\w_.-]+\.XML/i)
     return m?.[0] || null
   }).catch(() => null)
@@ -301,13 +307,18 @@ export async function syncSAFT(
     const nomeFicheiro = await exportarSAFT(page, di, df)
     await log(`📥 SAF-T exportado: ${nomeFicheiro}`)
 
-    // Captura o URL de download do ProgressBox (Download.aspx?type=5&ID=XXXX)
-    const downloadUrl = await page.evaluate(() => {
-      const prog = document.getElementById('utilsExportSAFTFileProgressWindowID_content') as HTMLIFrameElement
-      const links = Array.from(prog?.contentDocument?.querySelectorAll('a') || []) as HTMLAnchorElement[]
-      const link = links.find(a => a.href?.includes('Download.aspx'))
-      return link?.href || null
-    })
+    // Usa o URL capturado dentro do exportarSAFT (window.__saftDownloadUrl)
+    let downloadUrl = await page.evaluate(() => (window as any).__saftDownloadUrl || null).catch(() => null)
+
+    // Fallback: tenta ainda encontrar no ProgressBox
+    if (!downloadUrl) {
+      downloadUrl = await page.evaluate(() => {
+        const prog = document.getElementById('utilsExportSAFTFileProgressWindowID_content') as HTMLIFrameElement
+        const links = Array.from(prog?.contentDocument?.querySelectorAll('a') || []) as HTMLAnchorElement[]
+        const link = links.find((a: HTMLAnchorElement) => a.href?.includes('Download.aspx'))
+        return link?.href || null
+      }).catch(() => null)
+    }
 
     if (!downloadUrl) throw new Error('URL de download do SAF-T não encontrado no ProgressBox')
 
