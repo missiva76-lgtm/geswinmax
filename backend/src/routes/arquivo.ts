@@ -63,3 +63,18 @@ router.post('/sync', async (req: Request, res: Response) => {
 })
 
 export default router
+
+// GET /api/arquivo/pdf/:ficheiro — descarrega PDF do WinMax4 via proxy
+router.get('/pdf/:ficheiro', async (req: Request, res: Response) => {
+  try {
+    const { getConfig } = await import('../services/firebase')
+    const config = await getConfig()
+    const baseUrl = config.winmax_url || 'https://app102.winmax4.com'
+    const ficheiro = req.params.ficheiro
+    // URL do ficheiro no Arquivo Digital do WinMax4
+    const url = `${baseUrl}/MTransactions/DigitalArchiveFileHandler.aspx?file=${encodeURIComponent(ficheiro)}`
+    res.redirect(url)
+  } catch (err) {
+    res.status(500).json({ erro: String(err) })
+  }
+})
