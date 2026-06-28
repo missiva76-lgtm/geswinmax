@@ -94,7 +94,13 @@ export class WinmaxRPA {
     if (!fs.existsSync(this.config.pastaDestinoPDF)) {
       fs.mkdirSync(this.config.pastaDestinoPDF, { recursive: true })
     }
-    this.browser = await chromium.launch({ headless: true, slowMo: 80 })
+    // Usa chromium em vez de chromium-headless-shell (mais compatível com Render)
+    this.browser = await chromium.launch({ 
+      headless: true, 
+      slowMo: 80,
+      channel: undefined,
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+    })
     this.context = await this.browser.newContext({
       locale: 'pt-PT',
       timezoneId: 'Europe/Lisbon',
@@ -117,7 +123,7 @@ export class WinmaxRPA {
     // Aguarda iframe de autenticação
     await this.page!.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 15000 }
+      { timeout: 30000 }
     )
 
     // Preenche utilizador e password no iframe
@@ -132,57 +138,94 @@ export class WinmaxRPA {
     }, { user: this.config.utilizador, pass: this.config.password })
     await this.page!.waitForTimeout(500)
 
-    // Clica Confirmar
-    await this.page!.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-    })
-    await this.page!.waitForLoadState('networkidle')
+    // Clica Confirmar — o WinMax4 faz uma navegação após login bem sucedido
+    await Promise.all([
+      this.page!.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+      this.page!.evaluate(() => {
+        const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+        ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      })
+    ])
     await this.page!.waitForTimeout(2000)
 
-    // Verifica se o login foi bem sucedido
-    const ok = await this.page!.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      // Se o iframe de autenticação desapareceu = login ok
-      return !f || f.offsetParent === null
-    })
-
-    if (!ok) {
+    // Verifica se o login foi bem sucedido — aguarda que o Toolbox esteja presente
+    try {
+      await this.page!.waitForFunction(
+        () => !!document.getElementById('Toolbox_content'),
+        { timeout: 15000 }
+      )
+    } catch {
       await this.page!.screenshot({ path: 'logs/erro-login.png' })
-      throw new Error('Login falhou — credenciais incorrectas?')
+      throw new Error('Login falhou — Toolbox não carregou após autenticação')
     }
     await this.log('✅ Login OK')
   }
 
   private async evalIn(iframeId: string, code: string): Promise<unknown> {
+    // Usa script injetado no DOM do iframe para evitar restrições de strict mode
+    // (window.eval em strict mode bloqueia 'arguments' usado pelo ASP.NET WebForms)
     return this.page!.evaluate(
       ({ id, code }) => {
         const f = document.getElementById(id) as HTMLIFrameElement
-        if (!f?.contentWindow) throw new Error(`Iframe não encontrado: ${id}`)
-        return (f.contentWindow as any).eval(code)
+        if (!f?.contentWindow || !f?.contentDocument) throw new Error(`Iframe não encontrado: ${id}`)
+        const doc = f.contentDocument
+        // Remove script anterior se existir
+        const old = doc.getElementById('__rpa_eval__')
+        if (old) old.remove()
+        return new Promise<unknown>((resolve, reject) => {
+          try {
+            // Cria um script que executa no contexto do iframe (não-strict)
+            const script = doc.createElement('script')
+            script.id = '__rpa_eval__'
+            script.textContent = `
+              (function() {
+                try {
+                  var __result__ = (function() { return (${code}); })();
+                  window.__rpa_result__ = __result__;
+                  window.__rpa_error__ = null;
+                } catch(e) {
+                  window.__rpa_result__ = null;
+                  window.__rpa_error__ = e.message || String(e);
+                }
+              })();
+            `
+            doc.head.appendChild(script)
+            const err = (f.contentWindow as any).__rpa_error__
+            if (err) reject(new Error(err))
+            else resolve((f.contentWindow as any).__rpa_result__)
+          } catch(e: any) {
+            reject(e)
+          }
+        })
       },
       { id: iframeId, code }
     )
   }
 
-  private async waitFor(iframeId: string, selector: string, timeout = 10000): Promise<void> {
+  private async waitFor(iframeId: string, selector: string, timeout = 30000): Promise<void> {
     await this.page!.waitForFunction(
-      ({ id, sel }) => !!(document.getElementById(id) as HTMLIFrameElement)?.contentDocument?.querySelector(sel),
+      ({ id, sel }) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        if (!f) return false
+        const doc = f.contentDocument
+        if (!doc || doc.readyState === 'loading') return false
+        return !!doc.querySelector(sel)
+      },
       { id: iframeId, sel: selector },
-      { timeout }
+      { timeout, polling: 500 }
     )
   }
 
   private async verificarErro(di: string): Promise<string | null> {
-    return this.page!.evaluate(({ id, panelSel, bodySel }) => {
+    // O painel de erro do WinMax4 está sempre no DOM — só conta se tiver texto
+    return this.page!.evaluate(({ id, bodySel }) => {
       const f = document.getElementById(id) as HTMLIFrameElement
       const doc = f?.contentDocument
       if (!doc) return null
-      const panel = doc.querySelector(panelSel) as HTMLElement
-      if (!panel || panel.offsetParent === null) return null
       const body = doc.querySelector(bodySel) as HTMLElement
-      return body?.innerText?.trim() || null
-    }, { id: di, panelSel: SEL.msgPanel, bodySel: SEL.msgBody })
+      const texto = body?.innerText?.trim() || ''
+      return texto.length > 0 ? texto : null
+    }, { id: di, bodySel: SEL.msgBody })
   }
 
   private async abandonarDocumento(): Promise<void> {
@@ -195,42 +238,91 @@ export class WinmaxRPA {
   }
 
   private async abrirNovaFatura(): Promise<void> {
-    // Procura "Documentos de clientes" pelo título (índice muda entre sessões!)
-    await this.page!.evaluate(() => {
+    // Garante que o Toolbox está carregado antes de clicar
+    await this.page!.waitForFunction(
+      () => {
+        const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
+        const doc = tb?.contentDocument
+        return !!(doc && doc.readyState === 'complete' &&
+          doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
+      },
+      { timeout: 15000, polling: 500 }
+    )
+
+    // Verifica se o atalho existe e clica
+    const encontrado = await this.page!.evaluate(() => {
       const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
       const tbDoc = tb?.contentDocument
       const divs = Array.from(tbDoc?.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]') || [])
       const docClientes = divs.find(d => d.getAttribute('title') === 'Documentos de clientes') as HTMLElement | undefined
-      docClientes?.click()
+      if (docClientes) { docClientes.click(); return true }
+      return false
     })
+    await this.log(`  🖱️ Clique "Documentos de clientes": ${encontrado ? 'OK' : 'NÃO ENCONTRADO'}`)
+
+    // Aguarda o iframe aparecer no DOM
+    await this.page!.waitForFunction(
+      () => !!document.getElementById('transactionDocumentsIssueCustomerStandard_content'),
+      { timeout: 15000, polling: 300 }
+    )
+    await this.log('  📋 Iframe transactionDocuments presente')
+
+    // Aguarda o botão dentro do iframe
     await this.waitFor('transactionDocumentsIssueCustomerStandard_content',
-      '#wucFileList1_wucButtonInsert_linkButton1', 15000)
+      '#wucFileList1_wucButtonInsert_linkButton1', 20000)
+    await this.log('  📂 Lista de documentos carregada')
     await this.page!.waitForTimeout(800)
     await this.page!.evaluate(() => {
       const li = document.getElementById('transactionDocumentsIssueCustomerStandard_content') as HTMLIFrameElement
       ;(li?.contentDocument?.getElementById('wucFileList1_wucButtonInsert_linkButton1') as HTMLElement)?.click()
     })
-    await this.waitFor('DocumentIssue_content', SEL.entityCode)
+    await this.waitFor('DocumentIssue_content', SEL.entityCode, 30000)
     await this.page!.waitForTimeout(800)
   }
 
   private async preencherCabecalho(fatura: Fatura): Promise<void> {
     const di = 'DocumentIssue_content'
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
-    await this.evalIn(di, `
-      const s = document.getElementById('ddlDocumentType');
-      s.value = '${tipoVal}';
-      s.dispatchEvent(new Event('change', { bubbles: true }));
-    `)
-    await this.page!.waitForTimeout(400)
-    // Data = data do sistema (não se preenche)
-    await this.evalIn(di, `
-      const e = document.getElementById('txtEntityCode');
-      e.value = '${fatura.cliente_codigo}';
-      e.dispatchEvent(new Event('change', { bubbles: true }));
-      e.dispatchEvent(new Event('blur', { bubbles: true }));
-    `)
-    await this.page!.waitForTimeout(1000)
+
+    // Muda tipo de documento via frameLocator (mais fiável no Playwright headless)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#ddlDocumentType')
+      .selectOption(tipoVal)
+    
+    // Aguarda postback completar — espera que o valor seja confirmado
+    const tipoOk = await this.page!.waitForFunction(
+      ({ id, val }: { id: string; val: string }) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const doc = f?.contentDocument
+        if (!doc || doc.readyState !== 'complete') return false
+        const s = doc.getElementById('ddlDocumentType') as HTMLSelectElement
+        return s?.value === val
+      },
+      { id: di, val: tipoVal },
+      { timeout: 20000, polling: 300 }
+    ).then(() => true).catch(() => false)
+    
+    await this.page!.waitForTimeout(500)
+    const tipoAtual = await this.evalIn(di, `document.getElementById('ddlDocumentType')?.value || ''`)
+    await this.log(`  📄 Tipo documento: ${fatura.tipo_documento} (val=${tipoAtual})${tipoOk ? '' : ' ⚠️ não confirmado'}`)
+
+    // Preenche código do cliente usando frameLocator do Playwright (mais fiável que evalIn para inputs)
+    const frame = this.page!.frameLocator(`#${di}`)
+    await frame.locator('#txtEntityCode').fill(String(fatura.cliente_codigo))
+    await frame.locator('#txtEntityCode').press('Tab')
+    await this.page!.waitForTimeout(500)
+
+    // Aguarda o postback de validação do cliente (lblEntityName preenche quando válido)
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const nome = f?.contentDocument?.getElementById('lblEntityName')?.innerText?.trim() || ''
+        return nome.length > 0
+      },
+      di,
+      { timeout: 15000, polling: 500 }
+    )
+
     const erroEnt = await this.verificarErro(di)
     if (erroEnt) throw new Error(`Cliente inválido (${fatura.cliente_codigo}): ${erroEnt}`)
     const nome = await this.evalIn(di, `document.getElementById('lblEntityName')?.innerText || ''`)
@@ -241,42 +333,45 @@ export class WinmaxRPA {
     const di = 'DocumentIssue_content'
     const n = idx + 1
 
-    await this.evalIn(di, `
-      ['txtArticleCode','txtDesignation','txtUnitaryPrice','txtQuantity','txtDiscount1']
-        .forEach(id => { const el = document.getElementById(id); if(el){ el.value=''; el.dispatchEvent(new Event('change',{bubbles:true})); }});
-    `)
-    await this.page!.waitForTimeout(200)
+    // Clica "Inserir" para abrir o formulário de nova linha
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#wucButtonInsertDocumentDetail_linkButton1')
+      .click()
+    await this.waitFor(di, '#txtArticleCode', 10000)
+    await this.page!.waitForTimeout(300)
 
-    // Insere referência do artigo — WinMax4 preenche descrição e IVA automaticamente
-    await this.evalIn(di, `
-      const a = document.getElementById('txtArticleCode');
-      a.value = '${linha.artigo_ref.replace(/'/g, "\\'")}';
-      a.dispatchEvent(new Event('change', { bubbles: true }));
-      a.dispatchEvent(new Event('blur', { bubbles: true }));
-    `)
-    await this.page!.waitForTimeout(800)
+    // Insere referência do artigo via frameLocator — WinMax4 preenche descrição e IVA automaticamente
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtArticleCode')
+      .fill(linha.artigo_ref)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtArticleCode')
+      .press('Tab')
+    await this.page!.waitForTimeout(1000)
 
     const erroArtigo = await this.verificarErro(di)
     if (erroArtigo) throw new ErroLinhaArtigo(n, linha.artigo_ref,
       `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
 
-    // Preço (vem do Excel)
-    await this.evalIn(di, `
-      const p = document.getElementById('txtUnitaryPrice');
-      p.value = '${String(linha.preco_unitario).replace('.', ',')}';
-      p.dispatchEvent(new Event('change', { bubbles: true }));
-      p.dispatchEvent(new Event('blur', { bubbles: true }));
-    `)
-    await this.page!.waitForTimeout(200)
+    // Preço via frameLocator (mais fiável)
+    const precoStr = String(linha.preco_unitario).replace('.', ',')
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtUnitaryPrice')
+      .fill(precoStr)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtUnitaryPrice')
+      .press('Tab')
+    await this.page!.waitForTimeout(300)
 
-    // Quantidade (vem do Excel)
-    await this.evalIn(di, `
-      const q = document.getElementById('txtQuantity');
-      q.value = '${String(linha.quantidade).replace('.', ',')}';
-      q.dispatchEvent(new Event('change', { bubbles: true }));
-      q.dispatchEvent(new Event('blur', { bubbles: true }));
-    `)
-    await this.page!.waitForTimeout(200)
+    // Quantidade via frameLocator
+    const qtdStr = String(linha.quantidade).replace('.', ',')
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtQuantity')
+      .fill(qtdStr)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#txtQuantity')
+      .press('Tab')
+    await this.page!.waitForTimeout(300)
 
     // Desconto (vem do Excel)
     if (linha.desconto_pct > 0) {
@@ -290,7 +385,10 @@ export class WinmaxRPA {
 
     // IVA e descrição vêm da ficha do artigo no WinMax4 — não se preenchem
 
-    await this.evalIn(di, `window.InsertDocumentDetail()`)
+    // Clica botão "Inserir" via frameLocator (mais fiável que window.InsertDocumentDetail)
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#wucButtonInsertDocumentDetail_linkButton1')
+      .click()
     await this.page!.waitForTimeout(1200)
 
     const erroInsert = await this.verificarErro(di)
@@ -302,13 +400,24 @@ export class WinmaxRPA {
 
   private async adicionarComentario(comentario: string): Promise<void> {
     const di = 'DocumentIssue_content'
-    const tem = await this.evalIn(di,
-      `!!document.querySelector('input[id^="DetailPropertyRemarks"]')`) as boolean
+    // Verifica se existe botão de comentário via page.evaluate (mais robusto que evalIn)
+    const tem = await this.page!.evaluate(() => {
+      const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+      return !!f?.contentDocument?.querySelector('input[id^="DetailPropertyRemarks"]')
+    }).catch(() => false)
     if (!tem) { await this.log('  💬 Artigo sem textarea de comentário'); return }
 
-    await this.evalIn(di, `document.querySelector('input[id^="DetailPropertyRemarks"]')?.click()`)
-    await this.page!.waitForTimeout(500)
-    await this.evalIn(di, `window.__doPostBack('lbProcessPropertyIconClick','')`)
+    // Aguarda que o overlay_modal desapareça antes de clicar
+    await this.page!.waitForFunction(
+      () => !document.getElementById('overlay_modal') ||
+            (document.getElementById('overlay_modal') as HTMLElement).style.display === 'none' ||
+            !(document.getElementById('overlay_modal') as HTMLElement).offsetParent,
+      { timeout: 10000, polling: 300 }
+    ).catch(() => {})
+
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('input[id^="DetailPropertyRemarks"]')
+      .click({ timeout: 10000 })
     await this.page!.waitForTimeout(1500)
     await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
 
@@ -326,37 +435,70 @@ export class WinmaxRPA {
     await this.log('  💬 Comentário adicionado')
   }
 
-  private async imprimirEGuardarPDF(numPrevisto: string): Promise<string> {
-    const di = 'DocumentIssue_content'
-    const downloadPromise = this.page!.waitForEvent('download', { timeout: 20000 })
+  private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = '', clienteCodigo = ''): Promise<string> {
+    // O WinMax4 usa DocumentIssueClose_content para terminar+imprimir
+    await this.log('  🖨️ A aguardar iframe de fecho do documento...')
+    await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 15000)
+    await this.page!.waitForTimeout(500)
 
-    await this.evalIn(di, `
-      document.getElementById('wucModernMenu_hfSelectedOption').value = '${MENU.imprimir}';
-      window.__doPostBack('wucModernMenu$lbSelectOption','');
-    `)
-    await this.page!.waitForTimeout(2000)
-    await this.waitFor('DocumentIssuePrint_content', SEL.printReport, 8000)
+    // Seleciona template PDF se configurado
+    if (this.config.templatePDF) {
+      await this.page!.evaluate(({ tpl }) => {
+        const f = document.getElementById('DocumentIssueClose_content') as HTMLIFrameElement
+        const ddl = f?.contentDocument?.getElementById('ddlPrintReportName') as HTMLSelectElement
+        if (ddl) { ddl.value = tpl; ddl.dispatchEvent(new Event('change', { bubbles: true })) }
+      }, { tpl: this.config.templatePDF })
+      await this.page!.waitForTimeout(500)
+    }
 
-    await this.page!.evaluate(({ tpl }) => {
-      const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
-      const ddl = f?.contentDocument?.getElementById('ddlPrintReportName') as HTMLSelectElement
-      if (ddl) { ddl.value = tpl; ddl.dispatchEvent(new Event('change', { bubbles: true })) }
-    }, { tpl: this.config.templatePDF })
-
+    // Clica Confirmar — verifica também se precisa de confirmar documento com total zero
     await this.page!.evaluate(() => {
-      const f = document.getElementById('DocumentIssuePrint_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      const f = document.getElementById('DocumentIssueClose_content') as HTMLIFrameElement
+      const doc = f?.contentDocument
+      // Verifica se há link especial para total zero
+      const totalZero = doc?.getElementById('lbConfirmCloseDocumentWithTotalZero') as HTMLElement
+      if (totalZero && totalZero.offsetParent !== null) {
+        totalZero.click()
+      } else {
+        ;(doc?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      }
     })
+    await this.page!.waitForTimeout(5000)
 
+    // Captura o URL do Download.aspx — aguarda até 10s que o viewer apareça
     try {
-      const download = await downloadPromise
-      const nomeSeguro = numPrevisto.replace(/[\/\\:*?"<>|]/g, '_')
-      const destino = path.join(this.config.pastaDestinoPDF, `${nomeSeguro}.pdf`)
-      await download.saveAs(destino)
-      await this.log(`  🖨️  PDF: ${destino}`)
+      let downloadUrl: string | null = null
+      for (let i = 0; i < 10; i++) {
+        downloadUrl = await this.page!.evaluate(() => {
+          const iframes = Array.from(document.querySelectorAll('iframe'))
+          const viewer = iframes.find(f => f.src?.includes('Download.aspx'))
+          return viewer?.src || null
+        })
+        if (downloadUrl) break
+        await this.page!.waitForTimeout(1000)
+      }
+
+      if (!downloadUrl) {
+        await this.log('  ⚠️  PDF: URL de download não encontrado após 10s')
+        return ''
+      }
+      await this.log(`  🖨️  PDF URL encontrado`)
+
+      // Faz fetch do PDF usando as cookies da sessão Playwright
+      const cookies = await this.page!.context().cookies()
+      const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+      const resp = await fetch(downloadUrl, { headers: { Cookie: cookieHeader } })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+
+      const buffer = Buffer.from(await resp.arrayBuffer())
+      const nomeSeguro = `${clienteCodigo ? clienteCodigo + '_' : ''}${tipDoc ? tipDoc + '_' : ''}${numPrevisto}`.replace(/[\/\\:*?"<>|]/g, '_')
+      const destino = path.join(this.config.pastaDestinoPDF || '/tmp/pdfs', `${nomeSeguro}.pdf`)
+      fs.mkdirSync(path.dirname(destino), { recursive: true })
+      fs.writeFileSync(destino, buffer)
+      await this.log(`  🖨️  PDF guardado: ${nomeSeguro}.pdf`)
       return destino
-    } catch {
-      await this.log('  ⚠️  PDF: download não interceptado')
+    } catch (e: any) {
+      await this.log(`  ⚠️  PDF: erro ao guardar — ${e.message}`)
       return ''
     }
   }
@@ -367,24 +509,40 @@ export class WinmaxRPA {
       `document.getElementById('lblNextDocumentNumber')?.innerText?.replace(/[()]/g,'').trim() || 'doc'`
     ) as string
 
-    const localPDF = await this.imprimirEGuardarPDF(numPrevisto)
+    // Cancela linha de edição vazia se estiver aberta
+    const temCancelar = await this.evalIn(di,
+      `!!document.getElementById('wucButtonCancelDocumentDetail_linkButton1')`
+    ) as boolean
+    if (temCancelar) {
+      await this.page!.frameLocator('#DocumentIssue_content')
+        .locator('#wucButtonCancelDocumentDetail_linkButton1')
+        .click()
+      await this.page!.waitForTimeout(800)
+      await this.log('  ✖️  Linha vazia cancelada')
+    }
 
-    await this.evalIn(di, `
-      document.getElementById('wucModernMenu_hfSelectedOption').value = '${MENU.terminar}';
-      window.__doPostBack('wucModernMenu$lbSelectOption','');
-    `)
+    // Clica "Terminar" — abre DocumentIssueClose_content com opções de impressão
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#wucButtonClose_linkButton1')
+      .click()
     await this.page!.waitForTimeout(1500)
+    await this.log('  ✅ A terminar documento...')
 
-    await this.page!.evaluate(() => {
-      const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
-      const win = f?.contentWindow as any
-      if (typeof win?.ConfirmDocumentCloseWindow === 'function') win.ConfirmDocumentCloseWindow()
-    }).catch(() => {})
-    await this.page!.waitForTimeout(1500)
+    // imprimirEGuardarPDF aguarda o DocumentIssueClose_content e clica Confirmar
+    const localPDF = await this.imprimirEGuardarPDF(numPrevisto, fatura.tipo_documento, fatura.cliente_codigo)
 
-    const numDoc = await this.evalIn(di,
+    // Tenta obter número do documento — do iframe ou do nome do PDF
+    let numDoc = await this.evalIn(di,
       `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
-    ) as string
+    ).catch(() => '') as string
+
+    // Se não conseguiu do iframe, extrai do nome do PDF
+    if (!numDoc && localPDF) {
+      const nomePDF = path.basename(localPDF, '.pdf')
+      // Remove o prefixo do tipo (ex: FRB_ → 2026_85 → 2026/85)
+      const semTipo = nomePDF.replace(/^[A-Z]+_/, '')
+      numDoc = semTipo.replace('_', '/') // 2026_85 → 2026/85
+    }
 
     // Renomeia o PDF com o número definitivo
     if (localPDF && numDoc && numDoc !== numPrevisto) {
@@ -431,7 +589,8 @@ export class WinmaxRPA {
       index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
       tipo_documento: fatura.tipo_documento, sucesso: true,
       numero_documento: numDoc,
-      pdf_url: localPDF,   // substituído por URL Firebase Storage no job handler
+      pdf_url: localPDF,
+      total: fatura.linhas.reduce((s, l) => s + (l.preco_unitario * l.quantidade * (1 - (l.desconto_pct || 0) / 100)), 0),
       total_linhas: fatura.linhas.length, linhas_ok: fatura.linhas.length,
       duracao_ms: Date.now() - inicio,
     }

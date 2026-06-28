@@ -4,7 +4,7 @@ import cors from 'cors'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as cron from 'node-cron'
-import { initFirebase, getConfig } from './services/firebase'
+import { initFirebase, getConfig, db } from './services/firebase'
 import { logger } from './services/logger'
 import { syncWinmax } from './sync/syncArtigos'
 import { syncArquivoDigital } from './sync/syncArquivoDigital'
@@ -42,6 +42,33 @@ app.get('/health', (_req: express.Request, res: express.Response) => res.json({
   timestamp: new Date().toISOString(),
 }))
 
+app.get('/debug-firestore', async (_req: express.Request, res: express.Response) => {
+  try {
+    const snap = await db().collection('config').doc('winmax').get()
+    res.json({ ok: true, exists: snap.exists, project: process.env.FIREBASE_PROJECT_ID })
+  } catch (e: any) {
+    res.json({ ok: false, error: String(e) })
+  }
+})
+
+app.get('/debug-env', (_req: express.Request, res: express.Response) => {
+  const key = process.env.FIREBASE_PRIVATE_KEY || ''
+  const keyAfter = key.includes('\\n') ? key.split('\\n').join('\n') : key
+  res.json({
+    project_id: process.env.FIREBASE_PROJECT_ID,
+    client_email: process.env.FIREBASE_CLIENT_EMAIL,
+    key_length: key.length,
+    key_starts: key.substring(0, 30),
+    key_ends: key.substring(key.length - 30),
+    has_begin: key.includes('BEGIN PRIVATE KEY'),
+    has_end: key.includes('END PRIVATE KEY'),
+    newline_count: (key.match(/\n/g) || []).length,
+    literal_n_count: (key.match(/\\n/g) || []).length,
+    after_replace_newlines: (keyAfter.match(/\n/g) || []).length,
+    after_replace_starts: keyAfter.substring(0, 50),
+  })
+})
+
 app.use('/api/jobs',    jobsRouter)
 app.use('/api/artigos', artigosRouter)
 app.use('/api/faturas', faturasRouter)
@@ -51,7 +78,9 @@ app.use('/api/dados',   dadosRouter)
 app.use('/api/saft',    saftRouter)
 
 async function agendarSync() {
+  console.info('[agendarSync] A ler config...')
   const config = await getConfig()
+  console.info('[agendarSync] Config lida:', JSON.stringify(config).substring(0, 100))
   const hora = config.sync_hora || '02:00'
   const [h, m] = hora.split(':')
 
@@ -89,5 +118,13 @@ app.listen(PORT, async () => {
   logger.info(`\n╔══════════════════════════════════════╗`)
   logger.info(`║  GesWinmax Backend — porta ${PORT}       ║`)
   logger.info(`╚══════════════════════════════════════╝\n`)
-  await agendarSync()
+  logger.info('✅ Backend pronto — sync manual disponível via API')
+})
+
+// Evita crash por erros não tratados — mantém o servidor vivo para diagnóstico
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason)
 })

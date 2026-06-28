@@ -123,6 +123,7 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
         erro:             resultado.erro || null,
         erros_linhas:     resultado.erros_linhas || [],
         duracao_ms:       resultado.duracao_ms || 0,
+        total:            resultado.total || null,
         emitido_em:       admin.firestore.FieldValue.serverTimestamp(),
       })
     })

@@ -1,21 +1,65 @@
-// services/firebase.ts — Firebase Admin SDK (sem Storage — PDFs servidos pelo Render)
+// services/firebase.ts — Firebase Admin SDK
 import * as admin from 'firebase-admin'
 
 let initialized = false
+let firestoreInstance: admin.firestore.Firestore | null = null
 
 export function initFirebase() {
   if (initialized) return
+
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT
+  if (serviceAccountJson) {
+    try {
+      const serviceAccount = JSON.parse(serviceAccountJson)
+      // Garante que private_key tem newlines reais (não literais \n)
+      if (serviceAccount.private_key) {
+        serviceAccount.private_key = serviceAccount.private_key.split('\\n').join('\n')
+      }
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+      })
+      firestoreInstance = admin.firestore()
+      if (process.env.FIRESTORE_USE_REST === 'true') {
+        firestoreInstance.settings({ preferRest: true })
+        console.info('[Firebase] Firestore em modo REST')
+      }
+      initialized = true
+      console.info(`[Firebase] Inicializado via FIREBASE_SERVICE_ACCOUNT (project=${serviceAccount.project_id})`)
+      return
+    } catch (e) {
+      console.error('[Firebase] Erro ao parsear FIREBASE_SERVICE_ACCOUNT:', e)
+    }
+  }
+
+  const projectId   = process.env.FIREBASE_PROJECT_ID
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL
+  const rawKey      = process.env.FIREBASE_PRIVATE_KEY || ''
+  // Converte \n literais em newlines reais (independentemente do formato)
+  const privateKey  = rawKey.includes('\\n') 
+    ? rawKey.split('\\n').join('\n')
+    : rawKey  // já tem newlines reais
+  
+  console.info(`[Firebase] key starts: ${privateKey.substring(0,30)} newlines: ${(privateKey.match(/\n/g)||[]).length}`)
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error(`[Firebase] Credenciais em falta`)
+  }
+
   admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId:   process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey:  process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    }),
+    credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
   })
+  firestoreInstance = admin.firestore()
+  if (process.env.FIRESTORE_USE_REST === 'true') {
+    firestoreInstance.settings({ preferRest: true })
+  }
   initialized = true
+  console.info(`[Firebase] Inicializado (project=${projectId})`)
 }
 
-export const db = () => admin.firestore()
+export const db = () => {
+  if (!firestoreInstance) throw new Error('[Firebase] Firestore não inicializado')
+  return firestoreInstance
+}
 
 export async function updateJob(jobId: string, data: Record<string, unknown>) {
   await db().collection('jobs').doc(jobId).update({

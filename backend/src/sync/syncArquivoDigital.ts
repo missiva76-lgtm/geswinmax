@@ -20,10 +20,15 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { db, appendJobLog, getConfig } from '../services/firebase'
 import { logger } from '../services/logger'
+import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
 
 interface DocArquivo {
   data: string
   informacao: string
+  cliente?: string
+  cliente_nome?: string
+  cliente_codigo?: string
+  total_liquido: number | null
   ficheiro: string
   tamanho: string
   tipo_documento: string
@@ -44,15 +49,13 @@ function parseFicheiro(ficheiro: string): { tipo: string; numero: string; ano: s
 }
 
 async function abrirArquivoDigital(page: Page): Promise<void> {
-  // Toolbox página 1 → Div5 (Arquivo digital)
-  await page.evaluate(() => {
-    const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
-    ;(tb?.contentDocument?.getElementById('Toolbox_ShortcutIconDiv5') as HTMLElement)?.click()
-  })
+  // Procura "Arquivo digital" pelo título — robusto a mudanças de página/índice
+  const found = await clicarToolboxPorTitulo(page, 'Arquivo digital')
+  if (!found) throw new Error('Atalho "Arquivo digital" não encontrado no Toolbox')
   await page.waitForTimeout(2000)
   await page.waitForFunction(
     () => !!document.getElementById('utilsDigitalArchive_content'),
-    { timeout: 10000 }
+    { timeout: 30000 }
   )
 }
 
@@ -111,16 +114,34 @@ async function extrairLinhas(page: Page): Promise<DocArquivo[]> {
       const cells = Array.from(tr.querySelectorAll('td'))
         .map(td => (td as HTMLTableCellElement).innerText.trim())
       // colunas: (select) | Data | Informação | Ficheiro | Tamanho | (apagar)
+      // "Informação" tem formato: "FTB 2026/48\nNome do cliente\n141,92 EUR"
+      const informacao = cells[2] || ''
+      const linhasInfo = informacao.split('\n').map((s: string) => s.trim()).filter(Boolean)
+      // Primeira linha: "FTB 2025/93" → tipo + numero
+      const primLinha = linhasInfo[0] || ''
+      const tipoNum = primLinha.match(/^([A-Z]+)\s+(\d{4}\/\d+)/)
+      const tipo_documento   = tipoNum?.[1] || ''
+      const numero_documento = tipoNum?.[2] || primLinha
+      const ano              = numero_documento.split('/')[0] || ''
+      // Segunda linha: nome do cliente
+      const cliente_nome = linhasInfo[1] || ''
+      // Última linha com EUR: total
+      const totalStr = linhasInfo.find((l: string) => /[\d,.]+\s*EUR/.test(l)) || ''
+      const totalNum = parseFloat(totalStr.replace(/[^\d,.]/g,'').replace(',','.')) || null
+
       return {
         data:       cells[1] || '',
-        informacao: cells[2] || '',
+        informacao,
+        cliente_nome,
+        cliente_codigo: '',
+        total_liquido: totalNum,
         ficheiro:   cells[3] || '',
         tamanho:    cells[4] || '',
-        tipo_documento:   '',
-        numero_documento: '',
-        ano:              '',
+        tipo_documento,
+        numero_documento,
+        ano,
       }
-    }).filter(r => r.ficheiro)
+    }).filter((r: any) => r.ficheiro)
   })
 }
 
@@ -135,7 +156,7 @@ async function irProximaPagina(page: Page): Promise<boolean> {
   return paginaDepois.actual > paginaAntes.actual
 }
 
-export async function syncArquivoDigital(jobId?: string): Promise<void> {
+export async function syncArquivoDigital(jobId?: string, options?: { forceReimport?: boolean }): Promise<void> {
   const log = async (msg: string) => {
     logger.info(msg)
     if (jobId) await appendJobLog(jobId, msg).catch(() => {})
@@ -157,7 +178,7 @@ export async function syncArquivoDigital(jobId?: string): Promise<void> {
   let browser: Browser | null = null
 
   try {
-    browser = await chromium.launch({ headless: true })
+    browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
     const context = await browser.newContext({
       locale: 'pt-PT',
       timezoneId: 'Europe/Lisbon',
@@ -213,9 +234,15 @@ export async function syncArquivoDigital(jobId?: string): Promise<void> {
     await log(`📋 ${total} página(s)`)
 
     // Documentos já importados (sync incremental)
-    const existentesSnap = await db().collection('arquivo').select('ficheiro').get()
-    const existentes = new Set(existentesSnap.docs.map(d => d.data().ficheiro))
-    await log(`📥 ${existentes.size} já importados`)
+    const forceReimport = options?.forceReimport || false
+    let existentes = new Set<string>()
+    if (!forceReimport) {
+      const existentesSnap = await db().collection('arquivo').select('ficheiro').get()
+      existentes = new Set(existentesSnap.docs.map(d => d.data().ficheiro))
+      await log(`📥 ${existentes.size} já importados`)
+    } else {
+      await log('🔄 Reimportação forçada — a reimportar todos os documentos')
+    }
 
     const backendUrl = process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'
     let totalImportados = 0
@@ -232,31 +259,23 @@ export async function syncArquivoDigital(jobId?: string): Promise<void> {
         linha.numero_documento = numero
         linha.ano              = ano
 
-        // Tenta descarregar o PDF (best effort)
-        let pdfUrl: string | null = null
-        try {
-          const downloadPromise = page.waitForEvent('download', { timeout: 12000 })
-          await page.evaluate((nomeFicheiro: string) => {
-            const f   = document.getElementById('DigitalArchiveDetails_content') as HTMLIFrameElement
-            const doc = f?.contentDocument
-            if (!doc) return
-            const cells = Array.from(doc.querySelectorAll('td'))
-            const cell  = cells.find(td => td.innerText.trim() === nomeFicheiro) as HTMLTableCellElement | undefined
-            const row   = cell?.closest('tr')
-            const lnk   = row?.querySelector('a[id*="lnkSelect"]') as HTMLElement | undefined
-            lnk?.click()
-          }, linha.ficheiro)
-
-          const download = await downloadPromise
-          const destino  = path.join(pastaPDFs, linha.ficheiro)
-          await download.saveAs(destino)
-          pdfUrl = `${backendUrl}/api/pdfs/arquivo/${encodeURIComponent(linha.ficheiro)}`
-        } catch { /* PDF não disponível */ }
-
+        // Guarda metadados sem descarregar PDF (demasiado lento para todos os documentos)
+        // O PDF pode ser descarregado on-demand via /api/arquivo/:id/pdf
         const docId = linha.ficheiro.replace(/[.\/\\]/g, '_')
+        // Converte data "31/12/2025 21:03:52" para timestamp
+        let dataTs: admin.firestore.Timestamp | null = null
+        try {
+          const [datePart, timePart] = (linha.data || '').split(' ')
+          const [d, m, y] = (datePart || '').split('/')
+          if (d && m && y) {
+            dataTs = admin.firestore.Timestamp.fromDate(new Date(`${y}-${m}-${d}T${timePart || '00:00:00'}`))
+          }
+        } catch { /**/ }
+
         await db().collection('arquivo').doc(docId).set({
           ...linha,
-          pdf_url:      pdfUrl,
+          pdf_url:      null,
+          data_ts:      dataTs,
           importado_em: admin.firestore.FieldValue.serverTimestamp(),
           fonte:        'arquivo_digital_winmax',
         }, { merge: true })
