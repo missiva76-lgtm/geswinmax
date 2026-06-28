@@ -435,7 +435,7 @@ export class WinmaxRPA {
     await this.log('  💬 Comentário adicionado')
   }
 
-  private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = ''): Promise<string> {
+  private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = '', clienteCodigo = ''): Promise<string> {
     // O WinMax4 usa DocumentIssueClose_content para terminar+imprimir
     await this.log('  🖨️ A aguardar iframe de fecho do documento...')
     await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 15000)
@@ -491,7 +491,7 @@ export class WinmaxRPA {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
 
       const buffer = Buffer.from(await resp.arrayBuffer())
-      const nomeSeguro = `${tipDoc ? tipDoc + '_' : ''}${numPrevisto}`.replace(/[\/\\:*?"<>|]/g, '_')
+      const nomeSeguro = `${clienteCodigo ? clienteCodigo + '_' : ''}${tipDoc ? tipDoc + '_' : ''}${numPrevisto}`.replace(/[\/\\:*?"<>|]/g, '_')
       const destino = path.join(this.config.pastaDestinoPDF || '/tmp/pdfs', `${nomeSeguro}.pdf`)
       fs.mkdirSync(path.dirname(destino), { recursive: true })
       fs.writeFileSync(destino, buffer)
@@ -529,7 +529,7 @@ export class WinmaxRPA {
     await this.log('  ✅ A terminar documento...')
 
     // imprimirEGuardarPDF aguarda o DocumentIssueClose_content e clica Confirmar
-    const localPDF = await this.imprimirEGuardarPDF(numPrevisto, fatura.tipo_documento)
+    const localPDF = await this.imprimirEGuardarPDF(numPrevisto, fatura.tipo_documento, fatura.cliente_codigo)
 
     // Tenta obter número do documento — do iframe ou do nome do PDF
     let numDoc = await this.evalIn(di,
