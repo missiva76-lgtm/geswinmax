@@ -192,15 +192,21 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
     // Função para commit em batches de 400 (limite Firestore é 500)
     const commitBatches = async (ops: Array<{ col: string; id: string; data: Record<string, unknown> }>) => {
+      if (ops.length === 0) { await log('  ⚠️ Sem operações para guardar'); return }
       const SIZE = 400
       for (let i = 0; i < ops.length; i += SIZE) {
         const chunk = ops.slice(i, i + SIZE)
-        const batch = db().batch()
-        for (const op of chunk) {
-          batch.set(db().collection(op.col).doc(op.id), op.data, { merge: true })
+        try {
+          const batch = db().batch()
+          for (const op of chunk) {
+            batch.set(db().collection(op.col).doc(op.id), op.data, { merge: true })
+          }
+          await batch.commit()
+          await log(`  ✅ Batch ${Math.floor(i/SIZE)+1}/${Math.ceil(ops.length/SIZE)} guardado (${chunk.length} docs)`)
+        } catch (e) {
+          await log(`  ❌ Erro no batch ${Math.floor(i/SIZE)+1}: ${e}`)
+          throw e
         }
-        await batch.commit()
-        await log(`  ✅ Batch ${Math.floor(i/SIZE)+1}/${Math.ceil(ops.length/SIZE)} guardado (${chunk.length} docs)`)
       }
     }
 

@@ -47,7 +47,7 @@ router.get('/pesquisar', async (req: Request, res: Response) => {
 })
 
 // POST /api/arquivo/sync — importa/actualiza arquivo do WinMax4
-router.post('/sync', async (_req: Request, res: Response) => {
+router.post('/sync', async (req: Request, res: Response) => {
   const jobRef = db().collection('jobs').doc()
   await jobRef.set({
     id: jobRef.id, tipo: 'arquivo', estado: 'ativo',
@@ -55,7 +55,7 @@ router.post('/sync', async (_req: Request, res: Response) => {
     criado_em: admin.firestore.FieldValue.serverTimestamp(),
   })
 
-  syncArquivoDigital(jobRef.id)
+  syncArquivoDigital(jobRef.id, { forceReimport: req.query.force === 'true' })
     .then(() => jobRef.update({ estado: 'concluido', progresso: 100 }))
     .catch(async (e) => jobRef.update({ estado: 'erro', erro_geral: String(e) }))
 

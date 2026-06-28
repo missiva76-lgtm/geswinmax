@@ -156,7 +156,7 @@ async function irProximaPagina(page: Page): Promise<boolean> {
   return paginaDepois.actual > paginaAntes.actual
 }
 
-export async function syncArquivoDigital(jobId?: string): Promise<void> {
+export async function syncArquivoDigital(jobId?: string, options?: { forceReimport?: boolean }): Promise<void> {
   const log = async (msg: string) => {
     logger.info(msg)
     if (jobId) await appendJobLog(jobId, msg).catch(() => {})
@@ -234,9 +234,15 @@ export async function syncArquivoDigital(jobId?: string): Promise<void> {
     await log(`📋 ${total} página(s)`)
 
     // Documentos já importados (sync incremental)
-    const existentesSnap = await db().collection('arquivo').select('ficheiro').get()
-    const existentes = new Set(existentesSnap.docs.map(d => d.data().ficheiro))
-    await log(`📥 ${existentes.size} já importados`)
+    const forceReimport = options?.forceReimport || false
+    let existentes = new Set<string>()
+    if (!forceReimport) {
+      const existentesSnap = await db().collection('arquivo').select('ficheiro').get()
+      existentes = new Set(existentesSnap.docs.map(d => d.data().ficheiro))
+      await log(`📥 ${existentes.size} já importados`)
+    } else {
+      await log('🔄 Reimportação forçada — a reimportar todos os documentos')
+    }
 
     const backendUrl = process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'
     let totalImportados = 0
