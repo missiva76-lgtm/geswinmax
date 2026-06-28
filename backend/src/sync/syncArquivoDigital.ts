@@ -115,21 +115,29 @@ async function extrairLinhas(page: Page): Promise<DocArquivo[]> {
       // "Informação" tem formato: "FTB 2026/48\nNome do cliente\n141,92 EUR"
       const informacao = cells[2] || ''
       const linhasInfo = informacao.split('\n').map((s: string) => s.trim()).filter(Boolean)
-      const cliente = linhasInfo[1] || ''
-      // Extrai total — última linha com padrão numérico + EUR
+      // Primeira linha: "FTB 2025/93" → tipo + numero
+      const primLinha = linhasInfo[0] || ''
+      const tipoNum = primLinha.match(/^([A-Z]+)\s+(\d{4}\/\d+)/)
+      const tipo_documento   = tipoNum?.[1] || ''
+      const numero_documento = tipoNum?.[2] || primLinha
+      const ano              = numero_documento.split('/')[0] || ''
+      // Segunda linha: nome do cliente
+      const cliente_nome = linhasInfo[1] || ''
+      // Última linha com EUR: total
       const totalStr = linhasInfo.find((l: string) => /[\d,.]+\s*EUR/.test(l)) || ''
       const totalNum = parseFloat(totalStr.replace(/[^\d,.]/g,'').replace(',','.')) || null
 
       return {
         data:       cells[1] || '',
         informacao,
-        cliente,
+        cliente_nome,
+        cliente_codigo: '',
         total_liquido: totalNum,
         ficheiro:   cells[3] || '',
         tamanho:    cells[4] || '',
-        tipo_documento:   '',
-        numero_documento: '',
-        ano:              '',
+        tipo_documento,
+        numero_documento,
+        ano,
       }
     }).filter((r: any) => r.ficheiro)
   })

@@ -17,7 +17,7 @@ router.get('/', async (req: Request, res: Response) => {
       q = q.where('tipo_documento', '==', req.query.tipo) as any
     }
 
-    const snap = await q.limit(200).get()
+    const snap = await q.limit(2000).get()
     res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })))
   } catch (err) {
     res.status(500).json({ erro: String(err) })
@@ -28,7 +28,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/pesquisar', async (req: Request, res: Response) => {
   try {
     const q = String(req.query.q || '').toUpperCase().trim()
-    const snap = await db().collection('arquivo').orderBy('data', 'desc').limit(500).get()
+    const snap = await db().collection('arquivo').orderBy('data', 'desc').limit(2000).get()
 
     const todos = snap.docs.map(d => ({ id: d.id, ...d.data() as any }))
     const filtrados = q
