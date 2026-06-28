@@ -225,19 +225,25 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       const ops = artigos.flatMap(a => {
         const codigo = a['ArticleCode'] || a['Code'] || a['Código'] || a['Artigo'] || a['Ref'] || a['Referência'] || Object.values(a)[0]
         if (!codigo) return []
+        // Taxa IVA — vem no campo PurchaseTaxesToShow ou similar (ex: "23.00")
+        const taxaIva = parseFloat((a['PurchaseTaxesToShow'] || a['SaleTaxesToShow'] || '23').replace(',','.')) || 23
+        const precoSemIva = parseFloat((a['SalePrice1WithoutTaxesFees'] || '0').replace(',','.')) || 0
+        const precoComIva = precoSemIva * (1 + taxaIva / 100)
         return [{ col: 'artigos', id: String(codigo).replace(/[\/\\]/g,'_'), data: {
-          codigo:        String(codigo),
-          descricao:     a['ArticleDesignation'] || '',
-          familia:       a['FamilyDesignation'] || '',
-          sub_familia:   a['SubFamilyDesignation'] || '',
-          tipo:          a['ArticleType'] || '',
-          ativo:         a['IsActive'] === 'True' || a['IsActive'] === '1',
-          unidade:       a['StockUnitCode'] || '',
-          stock:         parseFloat((a['CurrentStock'] || '0').replace(',','.')) || 0,
-          preco_custo:   parseFloat((a['NetCostPrice'] || '0').replace(',','.')) || 0,
-          preco_venda:   parseFloat((a['SalePrice1WithoutTaxesFees'] || '0').replace(',','.')) || 0,
-          preco_venda2:  parseFloat((a['SalePrice2WithoutTaxesFees'] || '0').replace(',','.')) || 0,
-          ultima_sync:   now,
+          codigo:           String(codigo),
+          descricao:        a['ArticleDesignation'] || '',
+          familia:          a['FamilyDesignation'] || '',
+          sub_familia:      a['SubFamilyDesignation'] || '',
+          tipo:             a['ArticleType'] || '',
+          ativo:            a['IsActive'] === 'True' || a['IsActive'] === '1',
+          unidade:          a['StockUnitCode'] || '',
+          stock:            parseFloat((a['CurrentStock'] || '0').replace(',','.')) || 0,
+          preco_custo:      parseFloat((a['NetCostPrice'] || '0').replace(',','.')) || 0,
+          preco_sem_iva:    precoSemIva,
+          preco_com_iva:    Math.round(precoComIva * 100) / 100,
+          preco_venda:      precoSemIva,
+          taxa_iva:         taxaIva,
+          ultima_sync:      now,
         }}]
       })
       await commitBatches(ops)
@@ -261,18 +267,20 @@ export async function syncWinmax(jobId?: string): Promise<void> {
         const id = `${v['DocumentID'] || v['Nº Doc'] || v['Documento'] || ''}_${v['DocumentDate'] || v['Data'] || ''}`.replace(/[\/\\]/g,'_')
         if (!id || id === '_') return []
         return [{ col: 'movimentos_venda', id, data: {
-          data:            v['DocumentDate'] || '',
-          numero_doc:      v['DocumentNumber'] || '',
-          numero_doc_order:v['DocumentNumberForOrder'] || '',
-          tipo_doc:        v['DocumentCode'] || '',
-          cliente_codigo:  v['CustomerCode'] || '',
-          cliente_nome:    v['CustomerName'] || '',
-          cliente_nif:     v['CustomerTaxPayerNumber'] || '',
-          total:           parseFloat((v['Total'] || '0').replace(',','.')) || 0,
-          total_sem_iva:   parseFloat((v['TotalWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
-          total_iva:       parseFloat((v['TotalTaxesApplied'] || '0').replace(',','.')) || 0,
-          moeda:           v['CurrencyCode'] || 'EUR',
-          ultima_sync:     now,
+          data:             v['DocumentDate'] || '',
+          numero_doc:       v['DocumentNumber'] || '',
+          tipo_doc:         v['DocumentCode'] || '',
+          cliente_codigo:   v['CustomerCode'] || '',
+          cliente_nome:     v['CustomerName'] || '',
+          cliente_nif:      v['CustomerTaxPayerNumber'] || '',
+          vendedor:         v['SalesPersonName'] || '',
+          total:            parseFloat((v['Total'] || '0').replace(',','.')) || 0,
+          total_sem_iva:    parseFloat((v['TotalWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
+          total_iva:        parseFloat((v['TotalTaxesApplied'] || '0').replace(',','.')) || 0,
+          total_liquidado:  parseFloat((v['TotalLiquidated'] || '0').replace(',','.')) || 0,
+          moeda:            v['CurrencyCode'] || 'EUR',
+          pago:             v['Paid'] === 'True' || v['Paid'] === '1',
+          ultima_sync:      now,
         }}]
       })
       await log(`  → ${ops.length} ops geradas para Firestore`)

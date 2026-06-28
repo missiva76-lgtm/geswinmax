@@ -180,7 +180,8 @@ export default function Dados() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Código</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Descrição</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">IVA</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">PVP</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">S/ IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">C/ IVA</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Stock</th>
               </tr>
             </thead>
@@ -198,7 +199,8 @@ export default function Dados() {
                   <td className="px-4 py-2.5 text-right">
                     <span className="bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded-full">{a.taxa_iva}%</span>
                   </td>
-                  <td className="px-4 py-2.5 text-right text-gray-600 text-xs">{fmt(a.preco_venda)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-500 text-xs">{fmt((a as any).preco_sem_iva || a.preco_venda)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-800 text-xs font-medium">{fmt((a as any).preco_com_iva || a.preco_venda)}</td>
                   <td className="px-4 py-2.5 text-right text-xs">
                     {a.existencias > 0
                       ? <span className="text-teal-700 font-medium">{a.existencias}</span>
@@ -220,9 +222,9 @@ export default function Dados() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Data</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Nº Doc.</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Cliente</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Artigo</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd.</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">S/ IVA</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total</th>
+                <th className="text-center px-4 py-2.5 text-xs font-medium text-gray-500">Pago</th>
               </tr>
             </thead>
             <tbody>
@@ -239,10 +241,10 @@ export default function Dados() {
                     <span className="bg-blue-50 text-blue-700 text-xs px-1.5 py-0.5 rounded mr-1">{v.tipo_doc}</span>
                     {v.numero_doc}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-gray-700">{v.cliente_nome || v.cliente_codigo}</td>
-                  <td className="px-4 py-2.5 text-xs text-gray-700">{v.artigo_descricao || v.artigo_codigo}</td>
-                  <td className="px-4 py-2.5 text-right text-xs text-gray-600">{v.quantidade}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-700">{(v as any).cliente_nome || v.cliente_codigo}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-gray-500">{fmt((v as any).total_sem_iva || 0)}</td>
                   <td className="px-4 py-2.5 text-right text-xs font-medium text-gray-800">{fmt(v.total)}</td>
+                  <td className="px-4 py-2.5 text-center text-xs">{(v as any).pago ? '✅' : '—'}</td>
                 </tr>
               ))}
             </tbody>
