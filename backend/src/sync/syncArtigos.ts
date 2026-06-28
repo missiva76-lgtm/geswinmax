@@ -55,6 +55,7 @@ async function exportarCSV(
     campoFim?: string
     di?: string
     df?: string
+    timeout?: number
   }
 ): Promise<string | null> {
   // Abre a listagem dentro do MainPage via iframe (mantém a sessão)
@@ -120,7 +121,7 @@ async function exportarCSV(
   await page.waitForTimeout(300)
 
   // Aguarda o download
-  const downloadPromise = page.waitForEvent('download', { timeout: 30000 })
+  const downloadPromise = page.waitForEvent('download', { timeout: opts?.timeout || 30000 })
 
   // Confirma dentro do iframe
   await page.evaluate((id: string) => {
@@ -188,27 +189,40 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     await log('✅ Login OK')
 
     const now = admin.firestore.FieldValue.serverTimestamp()
-    const batch = db().batch()
+
+    // Função para commit em batches de 400 (limite Firestore é 500)
+    const commitBatches = async (ops: Array<{ col: string; id: string; data: Record<string, unknown> }>) => {
+      const SIZE = 400
+      for (let i = 0; i < ops.length; i += SIZE) {
+        const chunk = ops.slice(i, i + SIZE)
+        const batch = db().batch()
+        for (const op of chunk) {
+          batch.set(db().collection(op.col).doc(op.id), op.data, { merge: true })
+        }
+        await batch.commit()
+        await log(`  ✅ Batch ${Math.floor(i/SIZE)+1}/${Math.ceil(ops.length/SIZE)} guardado (${chunk.length} docs)`)
+      }
+    }
 
     // ─── Artigos Existências ───────────────────────────────────────────────
     await log('📦 Artigos Existências (CSV)...')
     const csvArtigos = await exportarCSV(page, '/MReports/Files/ArticleExistences.aspx', company)
     if (csvArtigos) {
       const artigos = parsearCSV(csvArtigos)
-      await log(`  → ${artigos.length} artigos | headers: ${Object.keys(artigos[0] || {}).join(', ')}`)
-
-      for (const a of artigos) {
+      await log(`  → ${artigos.length} artigos`)
+      const ops = artigos.flatMap(a => {
         const codigo = a['Código'] || a['Artigo'] || a['Ref'] || a['Referência'] || Object.values(a)[0]
-        if (!codigo) continue
-        batch.set(db().collection('artigos').doc(String(codigo).replace(/[\/\\]/g,'_')), {
+        if (!codigo) return []
+        return [{ col: 'artigos', id: String(codigo).replace(/[\/\\]/g,'_'), data: {
           codigo:      String(codigo),
           descricao:   a['Designação'] || a['Descrição'] || a['Nome'] || '',
           taxa_iva:    parseFloat((a['IVA'] || a['Taxa IVA'] || '23').replace(',','.').replace('%','')) || 23,
           preco_venda: parseFloat((a['PVP'] || a['Preço'] || a['P. Venda'] || '0').replace(',','.')) || 0,
           existencias: parseFloat((a['Existências'] || a['Stock'] || a['Qtd'] || a['Quantidade'] || '0').replace(',','.')) || 0,
           ultima_sync: now,
-        }, { merge: true })
-      }
+        }}]
+      })
+      await commitBatches(ops)
       fs.rmSync(csvArtigos, { force: true })
     } else {
       await log('  ⚠️ Sem ficheiro CSV')
@@ -223,12 +237,11 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     })
     if (csvVendas) {
       const vendas = parsearCSV(csvVendas)
-      await log(`  → ${vendas.length} vendas | headers: ${Object.keys(vendas[0] || {}).join(', ')}`)
-
-      for (const v of vendas) {
+      await log(`  → ${vendas.length} vendas`)
+      const ops = vendas.flatMap(v => {
         const id = `${v['Nº Doc'] || v['Documento'] || ''}_${v['Data'] || ''}`.replace(/[\/\\]/g,'_')
-        if (!id || id === '_') continue
-        batch.set(db().collection('movimentos_venda').doc(id), {
+        if (!id || id === '_') return []
+        return [{ col: 'movimentos_venda', id, data: {
           data: v['Data'] || '', numero_doc: v['Nº Doc'] || v['Documento'] || '',
           tipo_doc: v['Tipo'] || '', cliente_codigo: v['Cód. Cliente'] || v['Cliente'] || '',
           cliente_nome: v['Nome'] || v['Entidade'] || '',
@@ -237,8 +250,9 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           preco_unitario: parseFloat((v['Preço'] || v['PVP'] || '0').replace(',','.')) || 0,
           total: parseFloat((v['Total'] || v['Líquido'] || v['Valor'] || '0').replace(',','.')) || 0,
           ultima_sync: now,
-        }, { merge: true })
-      }
+        }}]
+      })
+      await commitBatches(ops)
       fs.rmSync(csvVendas, { force: true })
     }
 
@@ -248,15 +262,15 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
       di: dataInicio, df: dataFim,
+      timeout: 60000,
     })
     if (csvCompras) {
       const compras = parsearCSV(csvCompras)
-      await log(`  → ${compras.length} compras | headers: ${Object.keys(compras[0] || {}).join(', ')}`)
-
-      for (const c of compras) {
+      await log(`  → ${compras.length} compras`)
+      const ops = compras.flatMap(c => {
         const id = `${c['Nº Doc'] || ''}_${c['Artigo'] || ''}_${c['Data'] || ''}`.replace(/[\/\\]/g,'_')
-        if (!id || id === '__') continue
-        batch.set(db().collection('movimentos_compra').doc(id), {
+        if (!id || id === '__') return []
+        return [{ col: 'movimentos_compra', id, data: {
           data: c['Data'] || '', numero_doc: c['Nº Doc'] || '', tipo_doc: c['Tipo'] || '',
           fornecedor_codigo: c['Cód. Fornecedor'] || c['Fornecedor'] || '', fornecedor_nome: c['Nome'] || '',
           artigo_codigo: c['Artigo'] || c['Código'] || '', artigo_descricao: c['Descrição'] || c['Designação'] || '',
@@ -264,12 +278,13 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           preco_unitario: parseFloat((c['Preço'] || '0').replace(',','.')) || 0,
           total: parseFloat((c['Total'] || c['Valor'] || '0').replace(',','.')) || 0,
           ultima_sync: now,
-        }, { merge: true })
-      }
+        }}]
+      })
+      await commitBatches(ops)
       fs.rmSync(csvCompras, { force: true })
+    } else {
+      await log('  ⚠️ Sem CSV de compras (timeout ou sem dados)')
     }
-
-    if ((csvArtigos || csvVendas || csvCompras)) await batch.commit()
 
     await db().collection('sync_log').add({
       tipo: 'winmax_completa', data_inicio: dataInicio, data_fim: dataFim,
