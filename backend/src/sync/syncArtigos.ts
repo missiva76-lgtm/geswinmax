@@ -146,7 +146,12 @@ async function exportarCSV(
 // Parseia CSV e devolve array de objectos
 function parsearCSV(csvPath: string): Record<string, string>[] {
   const content = fs.readFileSync(csvPath, 'latin1')  // WinMax4 usa encoding latin1
-  const linhas  = content.split('\n').map(l => l.trim()).filter(l => l)
+  let linhas    = content.split('\n').map(l => l.trim()).filter(l => l)
+
+  if (linhas.length < 2) return []
+
+  // Remove linha "sep=," ou "sep=;" que o WinMax4 adiciona para compatibilidade Excel
+  if (linhas[0].startsWith('sep=')) linhas = linhas.slice(1)
 
   if (linhas.length < 2) return []
 
