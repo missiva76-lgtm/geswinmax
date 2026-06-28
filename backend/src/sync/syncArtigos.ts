@@ -252,17 +252,17 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       await log('  ⚠️ Sem ficheiro CSV')
     }
 
-    // ─── Vendas Documentos ────────────────────────────────────────────────
-    await log('📈 Vendas Documentos (CSV)...')
-    const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesIssuedDocuments.aspx', company, {
+    // ─── Vendas por Artigo ────────────────────────────────────────────────
+    await log('📈 Vendas por Artigo (CSV)...')
+    const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
       di: dataInicio, df: dataFim,
     })
     if (csvVendas) {
       const vendas = parsearCSV(csvVendas)
-      await log(`  → ${vendas.length} vendas | TODOS headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
-      if (vendas[0]) await log(`  → Exemplo venda: ${JSON.stringify(Object.entries(vendas[0]).slice(0,10))}`)
+      await log(`  → ${vendas.length} linhas vendas | headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
+      if (vendas[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(vendas[0]).slice(0,8))}`)
       const ops = vendas.flatMap(v => {
         const id = `${v['DocumentID'] || v['Nº Doc'] || v['Documento'] || ''}_${v['DocumentDate'] || v['Data'] || ''}`.replace(/[\/\\]/g,'_')
         if (!id || id === '_') return []
@@ -294,8 +294,8 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       fs.rmSync(csvVendas, { force: true })
     }
 
-    // ─── Compras Movimentos ───────────────────────────────────────────────
-    await log('📉 Compras Movimentos (CSV)...')
+    // ─── Compras por Artigo ───────────────────────────────────────────────
+    await log('📉 Compras por Artigo (CSV)...')
     const csvCompras = await exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
@@ -304,7 +304,8 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     })
     if (csvCompras) {
       const compras = parsearCSV(csvCompras)
-      await log(`  → ${compras.length} compras`)
+      await log(`  → ${compras.length} linhas compras | headers: ${Object.keys(compras[0] || {}).join(' | ')}`)
+      if (compras[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(compras[0]).slice(0,8))}`)
       const ops = compras.flatMap(c => {
         const id = `${c['Nº Doc'] || ''}_${c['Artigo'] || ''}_${c['Data'] || ''}`.replace(/[\/\\]/g,'_')
         if (!id || id === '__') return []
