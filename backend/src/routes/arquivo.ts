@@ -8,7 +8,7 @@ const router = Router()
 // GET /api/arquivo — lista documentos do arquivo (com filtros)
 router.get('/', async (req: Request, res: Response) => {
   try {
-    let q = db().collection('arquivo').orderBy('data_ts', 'desc')
+    let q = db().collection('arquivo').orderBy('importado_em', 'desc')
 
     if (req.query.cliente) {
       q = q.where('cliente_codigo', '==', req.query.cliente) as any
@@ -28,7 +28,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/pesquisar', async (req: Request, res: Response) => {
   try {
     const q = String(req.query.q || '').toUpperCase().trim()
-    const snap = await db().collection('arquivo').orderBy('data_ts', 'desc').limit(2000).get()
+    const snap = await db().collection('arquivo').orderBy('importado_em', 'desc').limit(2000).get()
 
     const todos = snap.docs.map(d => ({ id: d.id, ...d.data() as any }))
     const filtrados = q

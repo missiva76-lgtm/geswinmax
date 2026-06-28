@@ -43,7 +43,16 @@ export default function Arquivo() {
     setLoading(true)
     try {
       const res = await getArquivo(query || undefined)
-      setDocs(res)
+      // Ordena por data do documento (mais recente primeiro)
+      const sorted = [...res].sort((a, b) => {
+        const parseDate = (d: string) => {
+          const p = d?.split(' ')[0]?.split('/')
+          if (p?.length === 3) return new Date(`${p[2]}-${p[1]}-${p[0]}`).getTime()
+          return 0
+        }
+        return parseDate(b.data) - parseDate(a.data)
+      })
+      setDocs(sorted)
       setServerError(null)
     } catch(e: any) {
       setServerError(e)
