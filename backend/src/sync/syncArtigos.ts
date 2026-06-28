@@ -220,16 +220,17 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     const csvArtigos = await exportarCSV(page, '/MReports/Files/ArticleExistences.aspx', company)
     if (csvArtigos) {
       const artigos = parsearCSV(csvArtigos)
-      await log(`  → ${artigos.length} artigos`)
+      await log(`  → ${artigos.length} artigos | TODOS headers: ${Object.keys(artigos[0] || {}).join(' | ')}`)
+      if (artigos[0]) await log(`  → Exemplo artigo: ${JSON.stringify(Object.entries(artigos[0]).slice(0,8))}`)
       const ops = artigos.flatMap(a => {
-        const codigo = a['Código'] || a['Artigo'] || a['Ref'] || a['Referência'] || Object.values(a)[0]
+        const codigo = a['ArticleCode'] || a['Code'] || a['Código'] || a['Artigo'] || a['Ref'] || a['Referência'] || Object.values(a)[0]
         if (!codigo) return []
         return [{ col: 'artigos', id: String(codigo).replace(/[\/\\]/g,'_'), data: {
           codigo:      String(codigo),
-          descricao:   a['Designação'] || a['Descrição'] || a['Nome'] || '',
-          taxa_iva:    parseFloat((a['IVA'] || a['Taxa IVA'] || '23').replace(',','.').replace('%','')) || 23,
-          preco_venda: parseFloat((a['PVP'] || a['Preço'] || a['P. Venda'] || '0').replace(',','.')) || 0,
-          existencias: parseFloat((a['Existências'] || a['Stock'] || a['Qtd'] || a['Quantidade'] || '0').replace(',','.')) || 0,
+          descricao:   a['ArticleDesignation'] || a['Designation'] || a['Designação'] || a['Descrição'] || a['Nome'] || '',
+          taxa_iva:    parseFloat((a['VATRate'] || a['IVA'] || a['Taxa IVA'] || '23').replace(',','.').replace('%','')) || 23,
+          preco_venda: parseFloat((a['SalePrice'] || a['Price'] || a['PVP'] || a['Preço'] || '0').replace(',','.')) || 0,
+          existencias: parseFloat((a['Stock'] || a['Existences'] || a['Existências'] || a['Qtd'] || '0').replace(',','.')) || 0,
           ultima_sync: now,
         }}]
       })
@@ -248,18 +249,22 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     })
     if (csvVendas) {
       const vendas = parsearCSV(csvVendas)
-      await log(`  → ${vendas.length} vendas | headers: ${Object.keys(vendas[0] || {}).slice(0,6).join(', ')}`)
+      await log(`  → ${vendas.length} vendas | TODOS headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
+      if (vendas[0]) await log(`  → Exemplo venda: ${JSON.stringify(Object.entries(vendas[0]).slice(0,10))}`)
       const ops = vendas.flatMap(v => {
-        const id = `${v['Nº Doc'] || v['Documento'] || ''}_${v['Data'] || ''}`.replace(/[\/\\]/g,'_')
+        const id = `${v['DocumentID'] || v['Nº Doc'] || v['Documento'] || ''}_${v['DocumentDate'] || v['Data'] || ''}`.replace(/[\/\\]/g,'_')
         if (!id || id === '_') return []
         return [{ col: 'movimentos_venda', id, data: {
-          data: v['Data'] || '', numero_doc: v['Nº Doc'] || v['Documento'] || '',
-          tipo_doc: v['Tipo'] || '', cliente_codigo: v['Cód. Cliente'] || v['Cliente'] || '',
-          cliente_nome: v['Nome'] || v['Entidade'] || '',
-          artigo_codigo: v['Artigo'] || v['Código'] || '', artigo_descricao: v['Descrição'] || v['Designação'] || '',
-          quantidade: parseFloat((v['Qtd'] || v['Quantidade'] || '0').replace(',','.')) || 0,
-          preco_unitario: parseFloat((v['Preço'] || v['PVP'] || '0').replace(',','.')) || 0,
-          total: parseFloat((v['Total'] || v['Líquido'] || v['Valor'] || '0').replace(',','.')) || 0,
+          data:            v['DocumentDate'] || v['Data'] || '',
+          numero_doc:      v['DocumentNumber'] || v['Nº Doc'] || v['Documento'] || '',
+          tipo_doc:        v['DocumentCode'] || v['Tipo'] || '',
+          cliente_codigo:  v['EntityCode'] || v['Cód. Cliente'] || v['Cliente'] || '',
+          cliente_nome:    v['EntityName'] || v['Nome'] || v['Entidade'] || '',
+          artigo_codigo:   v['ArticleCode'] || v['Artigo'] || v['Código'] || '',
+          artigo_descricao:v['ArticleDesignation'] || v['Descrição'] || v['Designação'] || '',
+          quantidade:      parseFloat((v['Quantity'] || v['Qtd'] || v['Quantidade'] || '0').replace(',','.')) || 0,
+          preco_unitario:  parseFloat((v['UnitaryPrice'] || v['Preço'] || v['PVP'] || '0').replace(',','.')) || 0,
+          total:           parseFloat((v['TotalNetValue'] || v['Total'] || v['Líquido'] || v['Valor'] || '0').replace(',','.')) || 0,
           ultima_sync: now,
         }}]
       })
