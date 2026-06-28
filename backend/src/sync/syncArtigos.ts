@@ -243,7 +243,7 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     })
     if (csvVendas) {
       const vendas = parsearCSV(csvVendas)
-      await log(`  → ${vendas.length} vendas`)
+      await log(`  → ${vendas.length} vendas | headers: ${Object.keys(vendas[0] || {}).slice(0,6).join(', ')}`)
       const ops = vendas.flatMap(v => {
         const id = `${v['Nº Doc'] || v['Documento'] || ''}_${v['Data'] || ''}`.replace(/[\/\\]/g,'_')
         if (!id || id === '_') return []
@@ -258,7 +258,14 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           ultima_sync: now,
         }}]
       })
-      await commitBatches(ops)
+      await log(`  → ${ops.length} ops geradas para Firestore`)
+      if (ops.length > 0) {
+        await commitBatches(ops)
+      } else {
+        await log('  ⚠️ Nenhuma operação válida — verificar headers do CSV')
+        // Log primeira linha para diagnóstico
+        if (vendas[0]) await log(`  → Primeira linha: ${JSON.stringify(Object.entries(vendas[0]).slice(0,4))}`)
+      }
       fs.rmSync(csvVendas, { force: true })
     }
 
