@@ -25,7 +25,9 @@ import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
 interface DocArquivo {
   data: string
   informacao: string
-  cliente: string
+  cliente?: string
+  cliente_nome?: string
+  cliente_codigo?: string
   total_liquido: number | null
   ficheiro: string
   tamanho: string
