@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { FileSpreadsheet, Package, RefreshCw, AlertCircle, CheckCircle, Clock, BarChart2, Archive, Database, Link } from 'lucide-react'
+import { FileSpreadsheet, Package, RefreshCw, AlertCircle, CheckCircle, Clock, BarChart2, Archive, Database } from 'lucide-react'
 import { getJobs, getFaturas, getArtigos, getArquivo, getSaft } from '../services/api'
 import { Job, FaturaResultado } from '../types'
 
