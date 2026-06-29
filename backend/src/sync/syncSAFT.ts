@@ -69,7 +69,7 @@ async function exportarSAFT(page: Page, dataInicio: string, dataFim: string): Pr
   if (!found) throw new Error('Atalho SAF-T não encontrado no Toolbox')
   await page.waitForTimeout(2000)
   await page.waitForFunction(
-    () => !!document.getElementById('utilsExportSAFTFile_content'), { timeout: 30000 })
+    () => !!document.getElementById('utilsExportSAFTFile_content'), { timeout: 60000 })
 
   // Configura o período "A definir" e as datas
   await page.evaluate(({ di, df }: { di: string; df: string }) => {
@@ -277,7 +277,7 @@ export async function syncSAFT(
     // Aguarda o iframe de autenticação
     await page.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 15000 }
+      { timeout: 60000 }
     )
 
     // Preenche no iframe de autenticação
@@ -294,14 +294,14 @@ export async function syncSAFT(
 
     // Clica Confirmar com Promise.all para evitar race condition
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
       page.evaluate(() => {
         const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
         ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
       })
     ])
     await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 15000 })
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 60000 })
     await log('✅ Login OK')
 
     const nomeFicheiro = await exportarSAFT(page, di, df)

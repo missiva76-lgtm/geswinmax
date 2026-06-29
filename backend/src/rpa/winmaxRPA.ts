@@ -123,7 +123,7 @@ export class WinmaxRPA {
     // Aguarda iframe de autenticação
     await this.page!.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 30000 }
+      { timeout: 60000 }
     )
 
     // Preenche utilizador e password no iframe
@@ -140,7 +140,7 @@ export class WinmaxRPA {
 
     // Clica Confirmar — o WinMax4 faz uma navegação após login bem sucedido
     await Promise.all([
-      this.page!.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+      this.page!.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
       this.page!.evaluate(() => {
         const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
         ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
@@ -152,7 +152,7 @@ export class WinmaxRPA {
     try {
       await this.page!.waitForFunction(
         () => !!document.getElementById('Toolbox_content'),
-        { timeout: 15000 }
+        { timeout: 60000 }
       )
     } catch {
       await this.page!.screenshot({ path: 'logs/erro-login.png' })
@@ -246,7 +246,7 @@ export class WinmaxRPA {
         return !!(doc && doc.readyState === 'complete' &&
           doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
       },
-      { timeout: 15000, polling: 500 }
+      { timeout: 60000, polling: 500 }
     )
 
     // Verifica se o atalho existe e clica
@@ -263,7 +263,7 @@ export class WinmaxRPA {
     // Aguarda o iframe aparecer no DOM
     await this.page!.waitForFunction(
       () => !!document.getElementById('transactionDocumentsIssueCustomerStandard_content'),
-      { timeout: 15000, polling: 300 }
+      { timeout: 60000, polling: 300 }
     )
     await this.log('  📋 Iframe transactionDocuments presente')
 
@@ -320,7 +320,7 @@ export class WinmaxRPA {
         return nome.length > 0
       },
       di,
-      { timeout: 15000, polling: 500 }
+      { timeout: 60000, polling: 500 }
     )
 
     const erroEnt = await this.verificarErro(di)

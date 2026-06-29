@@ -55,7 +55,7 @@ async function abrirArquivoDigital(page: Page): Promise<void> {
   await page.waitForTimeout(2000)
   await page.waitForFunction(
     () => !!document.getElementById('utilsDigitalArchive_content'),
-    { timeout: 30000 }
+    { timeout: 60000 }
   )
 }
 
@@ -198,7 +198,7 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     // Aguarda o iframe de autenticação
     await page.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 15000 }
+      { timeout: 60000 }
     )
 
     // Preenche no iframe de autenticação
