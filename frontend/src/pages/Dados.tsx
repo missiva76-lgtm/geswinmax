@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Search, RefreshCw, Download } from 'lucide-react'
-import { getArtigos, triggerSync, ServerWakingError } from '../services/api'
+import { getArtigos, triggerSync } from '../services/api'
 import ServerWakingBanner from '../components/ServerWakingBanner'
 import { Artigo } from '../types'
 import * as XLSX from 'xlsx'
@@ -15,14 +15,27 @@ interface Movimento {
   cliente_nome?: string
   fornecedor_codigo?: string
   fornecedor_nome?: string
-  artigo_codigo: string
-  artigo_descricao: string
-  quantidade: number
-  preco_unitario: number
+  artigo_codigo?: string
+  artigo_descricao?: string
+  quantidade?: number
+  preco_unitario?: number
   total: number
+  total_sem_iva?: number
+  pago?: boolean
+  vendedor?: string
 }
 
-type Tab = 'artigos' | 'vendas' | 'compras'
+interface ArticlePurchaseSale {
+  artigo_codigo: string
+  artigo_descricao: string
+  familia?: string
+  total_vendas?: number
+  total_compras?: number
+  qtd_vendas?: number
+  qtd_compras?: number
+}
+
+type Tab = 'artigos' | 'vendas' | 'compras' | 'resumo'
 
 function exportarExcel(dados: Record<string, unknown>[], nomeTab: string) {
   const wb = XLSX.utils.book_new()
@@ -31,15 +44,22 @@ function exportarExcel(dados: Record<string, unknown>[], nomeTab: string) {
   XLSX.writeFile(wb, `geswinmax_${nomeTab}_${new Date().toISOString().slice(0,10)}.xlsx`)
 }
 
+const fmt = (n: number) => (n || 0).toFixed(2).replace('.', ',') + ' €'
+
 export default function Dados() {
   const [tab, setTab]           = useState<Tab>('artigos')
   const [artigos, setArtigos]   = useState<Artigo[]>([])
   const [vendas, setVendas]     = useState<Movimento[]>([])
   const [compras, setCompras]   = useState<Movimento[]>([])
+  const [resumo, setResumo]     = useState<ArticlePurchaseSale[]>([])
   const [q, setQ]               = useState('')
+  const [familiaFiltro, setFamilia] = useState('')
+  const [dataInicio, setDI]     = useState('')
+  const [dataFim, setDF]        = useState('')
   const [loading, setLoading]   = useState(false)
   const [syncing, setSyncing]   = useState(false)
   const [serverError, setServerError] = useState<Error | null>(null)
+  const searchRef               = useRef<ReturnType<typeof setTimeout>>()
 
   const pesquisarArtigos = async (query: string) => {
     setLoading(true)
@@ -54,9 +74,38 @@ export default function Dados() {
   const carregarMovimentos = async (tipo: 'vendas' | 'compras') => {
     setLoading(true)
     const colecao = tipo === 'vendas' ? 'movimentos_venda' : 'movimentos_compra'
-    let res = []
-    try { res = await fetch(`${API}/dados/${colecao}`).then(r => r.json()); setServerError(null) } catch(e: any) { setServerError(e) }
-    tipo === 'vendas' ? setVendas(res) : setCompras(res)
+    try {
+      const res = await fetch(`${API}/dados/${colecao}`).then(r => r.json())
+      tipo === 'vendas' ? setVendas(res) : setCompras(res)
+      setServerError(null)
+    } catch(e: any) { setServerError(e) }
+    setLoading(false)
+  }
+
+  const carregarResumo = async () => {
+    setLoading(true)
+    try {
+      const [v, c] = await Promise.all([
+        fetch(`${API}/dados/movimentos_venda`).then(r => r.json()),
+        fetch(`${API}/dados/movimentos_compra`).then(r => r.json()),
+      ])
+      // Agrupa por artigo
+      const mapa: Record<string, ArticlePurchaseSale> = {}
+      for (const venda of v) {
+        const k = venda.artigo_codigo || venda.numero_doc || '?'
+        if (!mapa[k]) mapa[k] = { artigo_codigo: k, artigo_descricao: venda.artigo_descricao || '', total_vendas: 0, total_compras: 0, qtd_vendas: 0, qtd_compras: 0 }
+        mapa[k].total_vendas! += venda.total || 0
+        mapa[k].qtd_vendas! += venda.quantidade || 1
+      }
+      for (const compra of c) {
+        const k = compra.artigo_codigo || compra.numero_doc || '?'
+        if (!mapa[k]) mapa[k] = { artigo_codigo: k, artigo_descricao: compra.artigo_descricao || '', total_vendas: 0, total_compras: 0, qtd_vendas: 0, qtd_compras: 0 }
+        mapa[k].total_compras! += compra.total || 0
+        mapa[k].qtd_compras! += compra.quantidade || 1
+      }
+      setResumo(Object.values(mapa).sort((a, b) => (b.total_vendas || 0) - (a.total_vendas || 0)))
+      setServerError(null)
+    } catch(e: any) { setServerError(e) }
     setLoading(false)
   }
 
@@ -64,78 +113,101 @@ export default function Dados() {
     if (tab === 'artigos') pesquisarArtigos(q)
     else if (tab === 'vendas' && vendas.length === 0) carregarMovimentos('vendas')
     else if (tab === 'compras' && compras.length === 0) carregarMovimentos('compras')
+    else if (tab === 'resumo' && resumo.length === 0) carregarResumo()
   }, [tab])
 
   const handleSync = async () => {
     setSyncing(true)
     await triggerSync().catch(() => {})
-    setTimeout(() => {
-      setSyncing(false)
-      pesquisarArtigos('')
-    }, 4000)
+    setTimeout(() => { setSyncing(false); pesquisarArtigos('') }, 4000)
   }
+
+  // Filtrar movimentos por data
+  const filtrarPorData = (movs: Movimento[]) => movs.filter(m => {
+    if (!dataInicio && !dataFim) return true
+    const d = m.data?.split('T')[0] || m.data
+    if (dataInicio && d < dataInicio) return false
+    if (dataFim   && d > dataFim)    return false
+    return true
+  })
+
+  // Famílias únicas para filtro
+  const familias = Array.from(new Set(artigos.map(a => (a as any).familia).filter(Boolean)))
+
+  // Artigos filtrados
+  const artigosFiltrados = artigos.filter(a => {
+    if (familiaFiltro && (a as any).familia !== familiaFiltro) return false
+    return true
+  })
+
+  const vendasFiltradas  = filtrarPorData(vendas)
+  const comprasFiltradas = filtrarPorData(compras)
 
   const handleExport = () => {
     if (tab === 'artigos') {
-      exportarExcel(artigos.map(a => ({
-        'Código':       a.codigo,
-        'Descrição':    a.descricao,
-        'IVA (%)':      a.taxa_iva,
-        'PVP (€)':      a.preco_venda,
-        'Stock':        a.existencias,
+      exportarExcel(artigosFiltrados.map(a => ({
+        'Família':    (a as any).familia || '',
+        'Código':     a.codigo,
+        'Descrição':  a.descricao,
+        'IVA (%)':    a.taxa_iva,
+        'S/ IVA (€)': (a as any).preco_sem_iva || a.preco_venda,
+        'C/ IVA (€)': (a as any).preco_com_iva || a.preco_venda,
+        'Stock':      a.existencias,
       })), 'artigos')
     } else if (tab === 'vendas') {
-      exportarExcel(vendas.map(v => ({
-        'Data':           v.data,
-        'Nº Documento':   v.numero_doc,
-        'Tipo':           v.tipo_doc,
-        'Cód. Cliente':   v.cliente_codigo || '',
-        'Cliente':        v.cliente_nome || '',
-        'Cód. Artigo':    v.artigo_codigo,
-        'Artigo':         v.artigo_descricao,
-        'Quantidade':     v.quantidade,
-        'Preço Unit.':    v.preco_unitario,
-        'Total (€)':      v.total,
+      exportarExcel(vendasFiltradas.map(v => ({
+        'Data':         v.data,
+        'Nº Doc.':      v.numero_doc,
+        'Tipo':         v.tipo_doc,
+        'Cliente':      (v as any).cliente_nome || v.cliente_codigo || '',
+        'S/ IVA (€)':   (v as any).total_sem_iva || 0,
+        'Total (€)':    v.total,
+        'Pago':         (v as any).pago ? 'Sim' : 'Não',
       })), 'movimentos_venda')
-    } else {
-      exportarExcel(compras.map(c => ({
-        'Data':             c.data,
-        'Nº Documento':     c.numero_doc,
-        'Tipo':             c.tipo_doc,
-        'Cód. Fornecedor':  c.fornecedor_codigo || '',
-        'Fornecedor':       c.fornecedor_nome || '',
-        'Cód. Artigo':      c.artigo_codigo,
-        'Artigo':           c.artigo_descricao,
-        'Quantidade':       c.quantidade,
-        'Preço Unit.':      c.preco_unitario,
-        'Total (€)':        c.total,
+    } else if (tab === 'compras') {
+      exportarExcel(comprasFiltradas.map(c => ({
+        'Data':           c.data,
+        'Nº Doc.':        c.numero_doc,
+        'Tipo':           c.tipo_doc,
+        'Fornecedor':     c.fornecedor_nome || c.fornecedor_codigo || '',
+        'Artigo':         c.artigo_descricao || c.artigo_codigo || '',
+        'Qtd.':           c.quantidade || '',
+        'Total (€)':      c.total,
       })), 'movimentos_compra')
+    } else if (tab === 'resumo') {
+      exportarExcel(resumo.map(r => ({
+        'Artigo':           r.artigo_codigo,
+        'Descrição':        r.artigo_descricao,
+        'Total Vendas (€)': r.total_vendas || 0,
+        'Qtd. Vendas':      r.qtd_vendas || 0,
+        'Total Compras (€)':r.total_compras || 0,
+        'Qtd. Compras':     r.qtd_compras || 0,
+      })), 'resumo_compras_vendas')
     }
   }
 
-  const fmt = (n: number) => n.toFixed(2).replace('.', ',') + ' €'
-
-  const dadosActuais = tab === 'artigos' ? artigos.length
-    : tab === 'vendas' ? vendas.length : compras.length
+  const temDados = tab === 'artigos' ? artigosFiltrados.length > 0
+    : tab === 'vendas' ? vendasFiltradas.length > 0
+    : tab === 'compras' ? comprasFiltradas.length > 0
+    : resumo.length > 0
 
   return (
-    <div>
-      <ServerWakingBanner error={serverError} onRetry={() => carregarArtigos(q)} />
-      <div className="flex items-center justify-between mb-6">
+    <div className="flex-1 overflow-auto p-6">
+      <ServerWakingBanner error={serverError} onRetry={() => pesquisarArtigos(q)} />
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Dados WinMax4</h2>
           <p className="text-sm text-gray-400">Artigos, existências e movimentos sincronizados</p>
         </div>
         <div className="flex gap-2">
-          {dadosActuais > 0 && (
+          {temDados && (
             <button onClick={handleExport}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
-              <Download size={13}/>
-              Exportar Excel
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
+              <Download size={13}/> Exportar Excel
             </button>
           )}
           <button onClick={handleSync} disabled={syncing}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors">
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50">
             <RefreshCw size={13} className={syncing ? 'animate-spin' : ''}/>
             {syncing ? 'A sincronizar...' : 'Sync agora'}
           </button>
@@ -143,33 +215,56 @@ export default function Dados() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1.5 mb-4">
+      <div className="flex gap-1.5 mb-4 flex-wrap">
         {([
           { id: 'artigos',  label: 'Artigos' },
           { id: 'vendas',   label: 'Movimentos de venda' },
           { id: 'compras',  label: 'Movimentos de compra' },
+          { id: 'resumo',   label: 'Resumo Compras/Vendas' },
         ] as { id: Tab; label: string }[]).map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`text-xs px-3 py-1.5 rounded-lg border transition-colors
-              ${tab === t.id
-                ? 'bg-teal-50 text-teal-700 border-teal-200'
-                : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+              ${tab === t.id ? 'bg-teal-50 text-teal-700 border-teal-200' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* Pesquisa (só artigos) */}
-      {tab === 'artigos' && (
-        <div className="relative mb-4">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-          <input
-            className="w-full pl-8 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-300"
-            placeholder="Pesquisar artigo por código ou descrição..."
-            value={q}
-            onChange={e => { setQ(e.target.value); pesquisarArtigos(e.target.value) }}/>
+      {/* Filtros */}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+          <input value={q}
+            onChange={e => {
+              setQ(e.target.value)
+              clearTimeout(searchRef.current)
+              searchRef.current = setTimeout(() => pesquisarArtigos(e.target.value), 400)
+            }}
+            placeholder={tab === 'artigos' ? 'Pesquisar por código ou descrição...' : 'Pesquisar...'}
+            className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-300"/>
         </div>
-      )}
+        {tab === 'artigos' && familias.length > 0 && (
+          <select value={familiaFiltro} onChange={e => setFamilia(e.target.value)}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-300">
+            <option value="">Todas as famílias</option>
+            {familias.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+        )}
+        {(tab === 'vendas' || tab === 'compras') && (
+          <>
+            <input type="date" value={dataInicio} onChange={e => setDI(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-300"
+              title="Data início"/>
+            <input type="date" value={dataFim} onChange={e => setDF(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-300"
+              title="Data fim"/>
+            {(dataInicio || dataFim) && (
+              <button onClick={() => { setDI(''); setDF('') }}
+                className="text-xs text-gray-400 hover:text-gray-600 px-2">Limpar</button>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Tabela Artigos */}
       {tab === 'artigos' && (
@@ -177,6 +272,7 @@ export default function Dados() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50">
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Família</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Código</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Descrição</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">IVA</th>
@@ -186,23 +282,22 @@ export default function Dados() {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
-              {!loading && artigos.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-400">
-                  Sem artigos. Faz uma sync primeiro.
-                </td></tr>
+              {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
+              {!loading && artigosFiltrados.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">Sem artigos. Faz uma sync primeiro.</td></tr>
               )}
-              {artigos.map(a => (
-                <tr key={a.codigo} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+              {artigosFiltrados.map(a => (
+                <tr key={a.codigo} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-4 py-2.5 text-xs text-gray-500">{(a as any).familia || '—'}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{a.codigo}</td>
-                  <td className="px-4 py-2.5 text-gray-800">{a.descricao}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-800">{a.descricao}</td>
                   <td className="px-4 py-2.5 text-right">
                     <span className="bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded-full">{a.taxa_iva}%</span>
                   </td>
                   <td className="px-4 py-2.5 text-right text-gray-500 text-xs">{fmt((a as any).preco_sem_iva || a.preco_venda)}</td>
                   <td className="px-4 py-2.5 text-right text-gray-800 text-xs font-medium">{fmt((a as any).preco_com_iva || a.preco_venda)}</td>
                   <td className="px-4 py-2.5 text-right text-xs">
-                    {a.existencias > 0
+                    {(a.existencias || 0) > 0
                       ? <span className="text-teal-700 font-medium">{a.existencias}</span>
                       : <span className="text-gray-400">—</span>}
                   </td>
@@ -229,13 +324,11 @@ export default function Dados() {
             </thead>
             <tbody>
               {loading && <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
-              {!loading && vendas.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">
-                  Sem movimentos. Faz uma sync primeiro.
-                </td></tr>
+              {!loading && vendasFiltradas.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
               )}
-              {vendas.map((v, i) => (
-                <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+              {vendasFiltradas.map((v, i) => (
+                <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-xs text-gray-600">{v.data}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-gray-700">
                     <span className="bg-blue-50 text-blue-700 text-xs px-1.5 py-0.5 rounded mr-1">{v.tipo_doc}</span>
@@ -268,13 +361,11 @@ export default function Dados() {
             </thead>
             <tbody>
               {loading && <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
-              {!loading && compras.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">
-                  Sem movimentos. Faz uma sync primeiro.
-                </td></tr>
+              {!loading && comprasFiltradas.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
               )}
-              {compras.map((c, i) => (
-                <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+              {comprasFiltradas.map((c, i) => (
+                <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-xs text-gray-600">{c.data}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-gray-700">
                     <span className="bg-amber-50 text-amber-700 text-xs px-1.5 py-0.5 rounded mr-1">{c.tipo_doc}</span>
@@ -282,8 +373,42 @@ export default function Dados() {
                   </td>
                   <td className="px-4 py-2.5 text-xs text-gray-700">{c.fornecedor_nome || c.fornecedor_codigo}</td>
                   <td className="px-4 py-2.5 text-xs text-gray-700">{c.artigo_descricao || c.artigo_codigo}</td>
-                  <td className="px-4 py-2.5 text-right text-xs text-gray-600">{c.quantidade}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-gray-600">{c.quantidade || '—'}</td>
                   <td className="px-4 py-2.5 text-right text-xs font-medium text-gray-800">{fmt(c.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Tabela Resumo Compras/Vendas por Artigo */}
+      {tab === 'resumo' && (
+        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-50 bg-gray-50">
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Código</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Descrição</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd. Vendas</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total Vendas</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd. Compras</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total Compras</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
+              {!loading && resumo.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">Sem dados. Faz uma sync primeiro.</td></tr>
+              )}
+              {resumo.map((r, i) => (
+                <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{r.artigo_codigo}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-800">{r.artigo_descricao}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-gray-600">{r.qtd_vendas || 0}</td>
+                  <td className="px-4 py-2.5 text-right text-xs font-medium text-blue-700">{fmt(r.total_vendas || 0)}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-gray-600">{r.qtd_compras || 0}</td>
+                  <td className="px-4 py-2.5 text-right text-xs font-medium text-amber-700">{fmt(r.total_compras || 0)}</td>
                 </tr>
               ))}
             </tbody>

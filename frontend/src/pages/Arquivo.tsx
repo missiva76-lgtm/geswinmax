@@ -90,8 +90,11 @@ export default function Arquivo() {
     return true
   })
 
-  // PDF disponível apenas no WinMax4 (requer sessão autenticada)
-  const pdfDownloadUrl = (_ficheiro: string) => null
+  // URL de download autenticado via backend Playwright
+  const pdfDownloadUrl = (ficheiro: string) => {
+    if (!ficheiro) return null
+    return `https://geswinmax-backend-8oo6.onrender.com/api/arquivo/download/${encodeURIComponent(ficheiro)}`
+  }
 
   return (
     <div className="flex-1 overflow-auto p-6">
@@ -185,9 +188,10 @@ export default function Arquivo() {
                   </td>
                   <td className="px-4 py-2.5 text-center">
                     {urlPDF ? (
-                      <a href={urlPDF} download={doc.ficheiro}
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700">
-                        <Download size={13}/>
+                      <a href={urlPDF} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                        title="Ver PDF">
+                        <FileText size={13}/> PDF
                       </a>
                     ) : (
                       <span className="text-gray-300 text-xs">—</span>
