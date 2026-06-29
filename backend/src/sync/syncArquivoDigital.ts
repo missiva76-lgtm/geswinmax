@@ -192,7 +192,7 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     // O WinMax4 abre sempre no MainPage com um iframe de autenticação UserAuthentication_content
     // Campos: txtUserLogin / txtUserPassword — botão: wucButtonConfirm_linkButton1
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-    await page.goto(url, { waitUntil: 'networkidle' })
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(2000)
 
     // Aguarda o iframe de autenticação

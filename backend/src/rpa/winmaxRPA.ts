@@ -117,7 +117,7 @@ export class WinmaxRPA {
     // WinMax4 abre no MainPage.aspx com iframe UserAuthentication_content
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${this.config.companyCode}`
     await this.log(`🔑 Login: ${url}`)
-    await this.page!.goto(url, { waitUntil: 'networkidle' })
+    await this.page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await this.page!.waitForTimeout(2000)
 
     // Aguarda iframe de autenticação
