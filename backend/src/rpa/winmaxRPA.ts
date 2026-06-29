@@ -202,7 +202,7 @@ export class WinmaxRPA {
     )
   }
 
-  private async waitFor(iframeId: string, selector: string, timeout = 30000): Promise<void> {
+  private async waitFor(iframeId: string, selector: string, timeout = 60000): Promise<void> {
     await this.page!.waitForFunction(
       ({ id, sel }) => {
         const f = document.getElementById(id) as HTMLIFrameElement
@@ -276,7 +276,7 @@ export class WinmaxRPA {
       const li = document.getElementById('transactionDocumentsIssueCustomerStandard_content') as HTMLIFrameElement
       ;(li?.contentDocument?.getElementById('wucFileList1_wucButtonInsert_linkButton1') as HTMLElement)?.click()
     })
-    await this.waitFor('DocumentIssue_content', SEL.entityCode, 30000)
+    await this.waitFor('DocumentIssue_content', SEL.entityCode, 60000)
     await this.page!.waitForTimeout(800)
   }
 
