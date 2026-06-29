@@ -16,12 +16,12 @@ const BASE = 'https://app102.winmax4.com'
 
 async function loginWinmax(page: Page, config: any): Promise<void> {
   const url = `${BASE}/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-  await page.goto(url, { waitUntil: 'networkidle' })
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
   await page.waitForTimeout(2000)
 
   await page.waitForFunction(
     () => !!document.getElementById('UserAuthentication_content'),
-    { timeout: 15000 }
+    { timeout: 60000 }
   )
 
   await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
@@ -35,14 +35,14 @@ async function loginWinmax(page: Page, config: any): Promise<void> {
 
   await page.waitForTimeout(300)
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
     page.evaluate(() => {
       const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
   ])
   await page.waitForTimeout(2000)
-  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 15000 })
+  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 60000 })
 }
 
 // Abre uma listagem, muda para CSV e faz download
@@ -121,7 +121,7 @@ async function exportarCSV(
   await page.waitForTimeout(300)
 
   // Aguarda o download
-  const downloadPromise = page.waitForEvent('download', { timeout: opts?.timeout || 30000 })
+  const downloadPromise = page.waitForEvent('download', { timeout: opts?.timeout || 60000 })
 
   // Confirma dentro do iframe
   await page.evaluate((id: string) => {
