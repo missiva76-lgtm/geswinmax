@@ -16,13 +16,16 @@ const BASE = 'https://app102.winmax4.com'
 
 async function loginWinmax(page: Page, config: any): Promise<void> {
   const url = `${BASE}/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
-  await page.waitForTimeout(2000)
+  console.log('[Sync] A navegar para WinMax4...')
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 })
+  console.log('[Sync] Página carregada, a aguardar UserAuthentication_content...')
+  await page.waitForTimeout(3000)
 
   await page.waitForFunction(
     () => !!document.getElementById('UserAuthentication_content'),
-    { timeout: 60000 }
+    { timeout: 90000 }
   )
+  console.log('[Sync] UserAuthentication_content encontrado')
 
   await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
     const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
