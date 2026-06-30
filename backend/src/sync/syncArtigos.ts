@@ -195,10 +195,36 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
   const config  = await getConfig()
   const company = config.company_code || 'AUTOAVENIDA'
-  const dataInicio = (config.sync_data_inicio || '01-01-2000').replace(/-/g, '/')
-  const dataFim    = (config.sync_data_fim || new Date().toLocaleDateString('pt-PT').replace(/\//g,'-')).replace(/-/g,'/')
 
-  await log(`🔄 Sync WinMax4: ${dataInicio} → ${dataFim}`)
+  // Sync incremental: usa a data da última sync bem-sucedida (menos 2 dias de margem)
+  // em vez de sempre reimportar desde sync_data_inicio
+  let dataInicio = (config.sync_data_inicio || '01-01-2000').replace(/-/g, '/')
+  const ultimaSyncSnap = await db().collection('sync_log')
+    .where('tipo', '==', 'winmax_completa')
+    .orderBy('criado_em', 'desc')
+    .limit(1)
+    .get()
+    .catch(() => null)
+
+  if (ultimaSyncSnap && !ultimaSyncSnap.empty) {
+    const ultima = ultimaSyncSnap.docs[0].data()
+    const ultimaData = ultima.criado_em?.toDate?.() || null
+    if (ultimaData) {
+      const margem = new Date(ultimaData)
+      margem.setDate(margem.getDate() - 2) // 2 dias de margem para apanhar alterações tardias
+      const incrementalStr = margem.toLocaleDateString('pt-PT') // DD/MM/YYYY
+      // Usa o incremental apenas se for mais recente que o configurado (evita andar para trás)
+      const [di, mi, yi] = dataInicio.split('/').map(Number)
+      const dataInicioObj = new Date(yi, mi - 1, di)
+      if (margem > dataInicioObj) {
+        dataInicio = incrementalStr
+      }
+    }
+  }
+
+  const dataFim = (config.sync_data_fim || new Date().toLocaleDateString('pt-PT').replace(/\//g,'-')).replace(/-/g,'/')
+
+  await log(`🔄 Sync WinMax4 (incremental): ${dataInicio} → ${dataFim}`)
 
   let browser: Browser | null = null
   try {
@@ -214,10 +240,10 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
     const now = admin.firestore.FieldValue.serverTimestamp()
 
-    // Função para commit em batches de 400 (limite Firestore é 500)
+    // Função para commit em batches (tamanho reduzido + pausa entre batches para não sobrecarregar Firestore)
     const commitBatches = async (ops: Array<{ col: string; id: string; data: Record<string, unknown> }>) => {
       if (ops.length === 0) { await log('  ⚠️ Sem operações para guardar'); return }
-      const SIZE = 400
+      const SIZE = 250
       for (let i = 0; i < ops.length; i += SIZE) {
         const chunk = ops.slice(i, i + SIZE)
         try {
@@ -225,7 +251,6 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           for (const op of chunk) {
             batch.set(db().collection(op.col).doc(op.id), op.data, { merge: true })
           }
-          // Timeout de 45s por batch para evitar bloqueio total
           await Promise.race([
             batch.commit(),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 45s no batch')), 45000))
@@ -233,8 +258,9 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           await log(`  ✅ Batch ${Math.floor(i/SIZE)+1}/${Math.ceil(ops.length/SIZE)} guardado (${chunk.length} docs)`)
         } catch (e) {
           await log(`  ⚠️ Batch ${Math.floor(i/SIZE)+1} falhou (a continuar): ${e}`)
-          // Não aborta — continua para os próximos batches
         }
+        // Pequena pausa entre batches para aliviar pressão sobre o Firestore
+        await new Promise(r => setTimeout(r, 500))
       }
     }
 
