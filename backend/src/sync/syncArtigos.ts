@@ -36,16 +36,32 @@ async function loginWinmax(page: Page, config: any): Promise<void> {
     if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
   }, { user: config.utilizador || '', pass: config.password || '' })
 
+  console.log('[Sync] Credenciais preenchidas, a clicar Confirmar...')
   await page.waitForTimeout(300)
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 90000 }).catch((e) => {
+      console.log('[Sync] waitForNavigation falhou (pode ser normal):', e.message)
+    }),
     page.evaluate(() => {
       const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
   ])
-  await page.waitForTimeout(2000)
-  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 60000 })
+  console.log('[Sync] Pós-login, a aguardar Toolbox_content...')
+  await page.waitForTimeout(3000)
+  
+  // Verifica se ainda está no ecrã de login (credenciais erradas)
+  const aindaLogin = await page.evaluate(() => !!document.getElementById('UserAuthentication_content')).catch(() => false)
+  if (aindaLogin) {
+    const erro = await page.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      return f?.contentDocument?.body?.innerText?.substring(0, 200) || ''
+    }).catch(() => '')
+    console.log('[Sync] AINDA no ecrã de login! Texto:', erro)
+  }
+  
+  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 })
+  console.log('[Sync] Toolbox_content encontrado — login OK')
 }
 
 // Abre uma listagem, muda para CSV e faz download
