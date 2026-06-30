@@ -287,7 +287,7 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       await log(`  → ${vendas.length} linhas vendas | headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
       if (vendas[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(vendas[0]).slice(0,8))}`)
       const ops = vendas.flatMap(v => {
-        const id = `${v['Document'] || v['DocumentID'] || ''}_${v['ArticleCode'] || ''}_${v['DocumentDate'] || ''}`.replace(/[\/\]/g,'_')
+        const id = `${v['Document'] || v['DocumentID'] || ''}_${v['ArticleCode'] || ''}_${v['DocumentDate'] || ''}`.split('/').join('_')
         if (!id || id === '__') return []
         return [{ col: 'movimentos_venda', id, data: {
           data:             v['DocumentDate'] || '',
@@ -306,6 +306,43 @@ export async function syncWinmax(jobId?: string): Promise<void> {
         }}]
       })
       await commitBatches(ops)
+      fs.rmSync(csvVendas, { force: true })
+    } else {
+      await log('  ⚠️ Sem CSV de vendas (timeout ou sem dados)')
+    }
+
+    // ─── Compras por Artigo ───────────────────────────────────────────────
+    await log('📉 Compras por Artigo (CSV)...')
+    const csvCompras = await exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
+      campoInicio: 'wucCalendarFromDate_txtModernDate',
+      campoFim:    'wucCalendarToDate_txtModernDate',
+      di: dataInicio, df: dataFim,
+      timeout: 60000,
+    })
+    if (csvCompras) {
+      const compras = parsearCSV(csvCompras)
+      await log(`  → ${compras.length} linhas compras | headers: ${Object.keys(compras[0] || {}).join(' | ')}`)
+      if (compras[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(compras[0]).slice(0,8))}`)
+      const opsCompras = compras.flatMap(c => {
+        const id = `${c['Document'] || ''}_${c['ArticleCode'] || ''}_${c['DocumentDate'] || ''}`.split('/').join('_')
+        if (!id || id === '__') return []
+        return [{ col: 'movimentos_compra', id, data: {
+          data:              c['DocumentDate'] || '',
+          numero_doc:        c['Document'] || '',
+          fornecedor_codigo: c['EntityCode'] || '',
+          fornecedor_nome:   c['EntityName'] || '',
+          artigo_codigo:     c['ArticleCode'] || '',
+          artigo_descricao:  c['ArticleDesignation'] || '',
+          familia:           c['FamilyDesignation'] || '',
+          quantidade:        parseFloat((c['Quantity'] || '0').replace(',','.')) || 0,
+          preco_unitario:    parseFloat((c['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
+          total:             parseFloat((c['Total'] || '0').replace(',','.')) || 0,
+          total_sem_iva:     parseFloat((c['TotalWithoutTaxes'] || '0').replace(',','.')) || 0,
+          vendedor:          c['SalesPersonName'] || '',
+          ultima_sync: now,
+        }}]
+      })
+      await commitBatches(opsCompras)
       fs.rmSync(csvCompras, { force: true })
     } else {
       await log('  ⚠️ Sem CSV de compras (timeout ou sem dados)')
