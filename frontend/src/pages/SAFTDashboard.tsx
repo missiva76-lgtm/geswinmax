@@ -85,11 +85,24 @@ export default function SAFTDashboard() {
 
   const handleSync = async () => {
     setSyncing(true)
-    await triggerSyncSAFT(diInput || undefined, dfInput || undefined).catch(() => {})
-    setTimeout(() => {
+    const r = await triggerSyncSAFT(diInput || undefined, dfInput || undefined).catch(() => null)
+    const jobId = r?.jobId
+    if (!jobId) {
       setSyncing(false)
-      window.location.reload()
-    }, 8000)
+      return
+    }
+    // Faz polling do job até concluir (em vez de esperar tempo fixo)
+    const poll = async (tentativas = 0): Promise<void> => {
+      if (tentativas > 40) { setSyncing(false); return } // máx ~2min
+      const job = await fetch(`${API}/jobs/${jobId}`).then(r => r.json()).catch(() => null)
+      if (job?.estado === 'concluido' || job?.estado === 'erro') {
+        setSyncing(false)
+        window.location.reload()
+        return
+      }
+      setTimeout(() => poll(tentativas + 1), 3000)
+    }
+    poll()
   }
 
   const ultimo = resumos[0]

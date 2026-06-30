@@ -10,13 +10,14 @@ const API = import.meta.env.VITE_API_URL || '/api'
 interface Movimento {
   data: string
   numero_doc: string
-  tipo_doc: string
+  tipo_doc?: string
   cliente_codigo?: string
   cliente_nome?: string
   fornecedor_codigo?: string
   fornecedor_nome?: string
   artigo_codigo?: string
   artigo_descricao?: string
+  familia?: string
   quantidade?: number
   preco_unitario?: number
   total: number
@@ -30,7 +31,9 @@ interface ArticlePurchaseSale {
   artigo_descricao: string
   familia?: string
   total_vendas?: number
+  total_vendas_sem_iva?: number
   total_compras?: number
+  total_compras_sem_iva?: number
   qtd_vendas?: number
   qtd_compras?: number
 }
@@ -89,21 +92,8 @@ export default function Dados() {
         fetch(`${API}/dados/movimentos_venda`).then(r => r.json()),
         fetch(`${API}/dados/movimentos_compra`).then(r => r.json()),
       ])
-      // Agrupa por artigo
-      const mapa: Record<string, ArticlePurchaseSale> = {}
-      for (const venda of v) {
-        const k = venda.artigo_codigo || venda.numero_doc || '?'
-        if (!mapa[k]) mapa[k] = { artigo_codigo: k, artigo_descricao: venda.artigo_descricao || '', total_vendas: 0, total_compras: 0, qtd_vendas: 0, qtd_compras: 0 }
-        mapa[k].total_vendas! += venda.total || 0
-        mapa[k].qtd_vendas! += venda.quantidade || 1
-      }
-      for (const compra of c) {
-        const k = compra.artigo_codigo || compra.numero_doc || '?'
-        if (!mapa[k]) mapa[k] = { artigo_codigo: k, artigo_descricao: compra.artigo_descricao || '', total_vendas: 0, total_compras: 0, qtd_vendas: 0, qtd_compras: 0 }
-        mapa[k].total_compras! += compra.total || 0
-        mapa[k].qtd_compras! += compra.quantidade || 1
-      }
-      setResumo(Object.values(mapa).sort((a, b) => (b.total_vendas || 0) - (a.total_vendas || 0)))
+      setVendas(v)
+      setCompras(c)
       setServerError(null)
     } catch(e: any) { setServerError(e) }
     setLoading(false)
@@ -113,7 +103,7 @@ export default function Dados() {
     if (tab === 'artigos') pesquisarArtigos(q)
     else if (tab === 'vendas' && vendas.length === 0) carregarMovimentos('vendas')
     else if (tab === 'compras' && compras.length === 0) carregarMovimentos('compras')
-    else if (tab === 'resumo' && resumo.length === 0) carregarResumo()
+    else if (tab === 'resumo' && vendas.length === 0 && compras.length === 0) carregarResumo()
   }, [tab])
 
   const handleSync = async () => {
@@ -131,8 +121,12 @@ export default function Dados() {
     return true
   })
 
-  // Famílias únicas para filtro
-  const familias = Array.from(new Set(artigos.map(a => (a as any).familia).filter(Boolean)))
+  // Famílias únicas para filtro (de artigos + vendas + compras)
+  const familias = Array.from(new Set([
+    ...artigos.map(a => (a as any).familia),
+    ...vendas.map(v => v.familia),
+    ...compras.map(c => c.familia),
+  ].filter(Boolean))).sort()
 
   // Artigos filtrados
   const artigosFiltrados = artigos.filter(a => {
@@ -140,8 +134,28 @@ export default function Dados() {
     return true
   })
 
-  const vendasFiltradas  = filtrarPorData(vendas)
-  const comprasFiltradas = filtrarPorData(compras)
+  const vendasFiltradas  = filtrarPorData(vendas).filter(v => !familiaFiltro || v.familia === familiaFiltro)
+  const comprasFiltradas = filtrarPorData(compras).filter(c => !familiaFiltro || c.familia === familiaFiltro)
+
+  // Resumo calculado a partir de vendas+compras filtradas por data e família
+  const resumoCalculado: ArticlePurchaseSale[] = (() => {
+    const mapa: Record<string, ArticlePurchaseSale> = {}
+    for (const venda of vendasFiltradas) {
+      const k = venda.artigo_codigo || venda.numero_doc || '?'
+      if (!mapa[k]) mapa[k] = { artigo_codigo: k, artigo_descricao: venda.artigo_descricao || '', familia: venda.familia || '', total_vendas: 0, total_vendas_sem_iva: 0, total_compras: 0, total_compras_sem_iva: 0, qtd_vendas: 0, qtd_compras: 0 }
+      mapa[k].total_vendas! += venda.total || 0
+      mapa[k].total_vendas_sem_iva! += venda.total_sem_iva || venda.total || 0
+      mapa[k].qtd_vendas! += venda.quantidade || 1
+    }
+    for (const compra of comprasFiltradas) {
+      const k = compra.artigo_codigo || compra.numero_doc || '?'
+      if (!mapa[k]) mapa[k] = { artigo_codigo: k, artigo_descricao: compra.artigo_descricao || '', familia: compra.familia || '', total_vendas: 0, total_vendas_sem_iva: 0, total_compras: 0, total_compras_sem_iva: 0, qtd_vendas: 0, qtd_compras: 0 }
+      mapa[k].total_compras! += compra.total || 0
+      mapa[k].total_compras_sem_iva! += compra.total_sem_iva || compra.total || 0
+      mapa[k].qtd_compras! += compra.quantidade || 1
+    }
+    return Object.values(mapa).sort((a, b) => (b.total_vendas || 0) - (a.total_vendas || 0))
+  })()
 
   const handleExport = () => {
     if (tab === 'artigos') {
@@ -150,6 +164,7 @@ export default function Dados() {
         'Código':     a.codigo,
         'Descrição':  a.descricao,
         'IVA (%)':    a.taxa_iva,
+        'Compra S/IVA (€)': (a as any).preco_custo || 0,
         'S/ IVA (€)': (a as any).preco_sem_iva || a.preco_venda,
         'C/ IVA (€)': (a as any).preco_com_iva || a.preco_venda,
         'Stock':      a.existencias,
@@ -158,30 +173,35 @@ export default function Dados() {
       exportarExcel(vendasFiltradas.map(v => ({
         'Data':         v.data,
         'Nº Doc.':      v.numero_doc,
-        'Tipo':         v.tipo_doc,
-        'Cliente':      (v as any).cliente_nome || v.cliente_codigo || '',
-        'S/ IVA (€)':   (v as any).total_sem_iva || 0,
+        'Família':      v.familia || '',
+        'Artigo':       v.artigo_descricao || v.artigo_codigo || '',
+        'Cliente':      v.cliente_nome || v.cliente_codigo || '',
+        'Qtd.':         v.quantidade || '',
+        'S/ IVA (€)':   v.total_sem_iva || 0,
         'Total (€)':    v.total,
-        'Pago':         (v as any).pago ? 'Sim' : 'Não',
       })), 'movimentos_venda')
     } else if (tab === 'compras') {
       exportarExcel(comprasFiltradas.map(c => ({
         'Data':           c.data,
         'Nº Doc.':        c.numero_doc,
-        'Tipo':           c.tipo_doc,
+        'Família':        c.familia || '',
         'Fornecedor':     c.fornecedor_nome || c.fornecedor_codigo || '',
         'Artigo':         c.artigo_descricao || c.artigo_codigo || '',
         'Qtd.':           c.quantidade || '',
-        'Total (€)':      c.total,
+        'S/ IVA (€)':     c.total_sem_iva || 0,
+        'C/ IVA (€)':     c.total,
       })), 'movimentos_compra')
     } else if (tab === 'resumo') {
-      exportarExcel(resumo.map(r => ({
-        'Artigo':           r.artigo_codigo,
-        'Descrição':        r.artigo_descricao,
-        'Total Vendas (€)': r.total_vendas || 0,
-        'Qtd. Vendas':      r.qtd_vendas || 0,
-        'Total Compras (€)':r.total_compras || 0,
-        'Qtd. Compras':     r.qtd_compras || 0,
+      exportarExcel(resumoCalculado.map(r => ({
+        'Artigo':              r.artigo_codigo,
+        'Descrição':           r.artigo_descricao,
+        'Família':             r.familia || '',
+        'Qtd. Vendas':         r.qtd_vendas || 0,
+        'Total Vendas S/IVA':  r.total_vendas_sem_iva || 0,
+        'Total Vendas C/IVA':  r.total_vendas || 0,
+        'Qtd. Compras':        r.qtd_compras || 0,
+        'Total Compras S/IVA': r.total_compras_sem_iva || 0,
+        'Total Compras C/IVA': r.total_compras || 0,
       })), 'resumo_compras_vendas')
     }
   }
@@ -189,7 +209,7 @@ export default function Dados() {
   const temDados = tab === 'artigos' ? artigosFiltrados.length > 0
     : tab === 'vendas' ? vendasFiltradas.length > 0
     : tab === 'compras' ? comprasFiltradas.length > 0
-    : resumo.length > 0
+    : resumoCalculado.length > 0
 
   return (
     <div className="flex-1 overflow-auto p-6">
@@ -243,14 +263,14 @@ export default function Dados() {
             placeholder={tab === 'artigos' ? 'Pesquisar por código ou descrição...' : 'Pesquisar...'}
             className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-300"/>
         </div>
-        {tab === 'artigos' && familias.length > 0 && (
+        {familias.length > 0 && (
           <select value={familiaFiltro} onChange={e => setFamilia(e.target.value)}
             className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-300">
             <option value="">Todas as famílias</option>
             {familias.map(f => <option key={f} value={f}>{f}</option>)}
           </select>
         )}
-        {(tab === 'vendas' || tab === 'compras') && (
+        {(tab === 'vendas' || tab === 'compras' || tab === 'resumo') && (
           <>
             <input type="date" value={dataInicio} onChange={e => setDI(e.target.value)}
               className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-300"
@@ -258,8 +278,8 @@ export default function Dados() {
             <input type="date" value={dataFim} onChange={e => setDF(e.target.value)}
               className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-300"
               title="Data fim"/>
-            {(dataInicio || dataFim) && (
-              <button onClick={() => { setDI(''); setDF('') }}
+            {(dataInicio || dataFim || familiaFiltro) && (
+              <button onClick={() => { setDI(''); setDF(''); setFamilia('') }}
                 className="text-xs text-gray-400 hover:text-gray-600 px-2">Limpar</button>
             )}
           </>
@@ -276,15 +296,16 @@ export default function Dados() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Código</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Descrição</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Compra S/IVA</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">S/ IVA</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">C/ IVA</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Stock</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
+              {loading && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
               {!loading && artigosFiltrados.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">Sem artigos. Faz uma sync primeiro.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Sem artigos. Faz uma sync primeiro.</td></tr>
               )}
               {artigosFiltrados.map(a => (
                 <tr key={a.codigo} className="border-b border-gray-50 hover:bg-gray-50">
@@ -294,6 +315,7 @@ export default function Dados() {
                   <td className="px-4 py-2.5 text-right">
                     <span className="bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded-full">{a.taxa_iva}%</span>
                   </td>
+                  <td className="px-4 py-2.5 text-right text-amber-700 text-xs">{fmt((a as any).preco_custo || 0)}</td>
                   <td className="px-4 py-2.5 text-right text-gray-500 text-xs">{fmt((a as any).preco_sem_iva || a.preco_venda)}</td>
                   <td className="px-4 py-2.5 text-right text-gray-800 text-xs font-medium">{fmt((a as any).preco_com_iva || a.preco_venda)}</td>
                   <td className="px-4 py-2.5 text-right text-xs">
@@ -316,28 +338,29 @@ export default function Dados() {
               <tr className="border-b border-gray-50 bg-gray-50">
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Data</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Nº Doc.</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Família</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Artigo</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Cliente</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd.</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">S/ IVA</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total</th>
-                <th className="text-center px-4 py-2.5 text-xs font-medium text-gray-500">Pago</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
+              {loading && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
               {!loading && vendasFiltradas.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
               )}
               {vendasFiltradas.map((v, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-xs text-gray-600">{v.data}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-gray-700">
-                    <span className="bg-blue-50 text-blue-700 text-xs px-1.5 py-0.5 rounded mr-1">{v.tipo_doc}</span>
-                    {v.numero_doc}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-gray-700">{(v as any).cliente_nome || v.cliente_codigo}</td>
-                  <td className="px-4 py-2.5 text-right text-xs text-gray-500">{fmt((v as any).total_sem_iva || 0)}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{v.numero_doc}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-500">{v.familia || '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-700">{v.artigo_descricao || v.artigo_codigo || '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-700">{v.cliente_nome || v.cliente_codigo || '—'}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-gray-600">{v.quantidade || '—'}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-gray-500">{fmt(v.total_sem_iva || 0)}</td>
                   <td className="px-4 py-2.5 text-right text-xs font-medium text-gray-800">{fmt(v.total)}</td>
-                  <td className="px-4 py-2.5 text-center text-xs">{(v as any).pago ? '✅' : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -353,27 +376,28 @@ export default function Dados() {
               <tr className="border-b border-gray-50 bg-gray-50">
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Data</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Nº Doc.</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Família</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Fornecedor</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Artigo</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd.</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">S/ IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">C/ IVA</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
+              {loading && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
               {!loading && comprasFiltradas.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
               )}
               {comprasFiltradas.map((c, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-xs text-gray-600">{c.data}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-gray-700">
-                    <span className="bg-amber-50 text-amber-700 text-xs px-1.5 py-0.5 rounded mr-1">{c.tipo_doc}</span>
-                    {c.numero_doc}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-gray-700">{c.fornecedor_nome || c.fornecedor_codigo}</td>
-                  <td className="px-4 py-2.5 text-xs text-gray-700">{c.artigo_descricao || c.artigo_codigo}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{c.numero_doc}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-500">{c.familia || '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-700">{c.fornecedor_nome || c.fornecedor_codigo || '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-700">{c.artigo_descricao || c.artigo_codigo || '—'}</td>
                   <td className="px-4 py-2.5 text-right text-xs text-gray-600">{c.quantidade || '—'}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-gray-500">{fmt(c.total_sem_iva || 0)}</td>
                   <td className="px-4 py-2.5 text-right text-xs font-medium text-gray-800">{fmt(c.total)}</td>
                 </tr>
               ))}
@@ -388,26 +412,32 @@ export default function Dados() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50">
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Família</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Código</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Descrição</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd. Vendas</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total Vendas</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Vendas S/IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Vendas C/IVA</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd. Compras</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total Compras</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Compras S/IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Compras C/IVA</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
-              {!loading && resumo.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">Sem dados. Faz uma sync primeiro.</td></tr>
+              {loading && <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
+              {!loading && resumoCalculado.length === 0 && (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-400">Sem dados. Faz uma sync primeiro.</td></tr>
               )}
-              {resumo.map((r, i) => (
+              {resumoCalculado.map((r, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-4 py-2.5 text-xs text-gray-500">{r.familia || '—'}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{r.artigo_codigo}</td>
                   <td className="px-4 py-2.5 text-xs text-gray-800">{r.artigo_descricao}</td>
                   <td className="px-4 py-2.5 text-right text-xs text-gray-600">{r.qtd_vendas || 0}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-blue-500">{fmt(r.total_vendas_sem_iva || 0)}</td>
                   <td className="px-4 py-2.5 text-right text-xs font-medium text-blue-700">{fmt(r.total_vendas || 0)}</td>
                   <td className="px-4 py-2.5 text-right text-xs text-gray-600">{r.qtd_compras || 0}</td>
+                  <td className="px-4 py-2.5 text-right text-xs text-amber-500">{fmt(r.total_compras_sem_iva || 0)}</td>
                   <td className="px-4 py-2.5 text-right text-xs font-medium text-amber-700">{fmt(r.total_compras || 0)}</td>
                 </tr>
               ))}
