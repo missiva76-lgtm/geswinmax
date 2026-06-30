@@ -306,13 +306,16 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     await log('📈 Vendas por Artigo (CSV)...')
     // Limpa coleção antes de reimportar (evita registos órfãos de syncs antigas com mapeamento diferente)
     await log('  🗑️ A limpar movimentos_venda antigos...')
-    const antigosVenda = await db().collection('movimentos_venda').limit(2000).get().catch(() => null)
-    if (antigosVenda && !antigosVenda.empty) {
+    let totalRemovidosVenda = 0
+    for (let tentativa = 0; tentativa < 10; tentativa++) {
+      const snap = await db().collection('movimentos_venda').limit(400).get().catch(() => null)
+      if (!snap || snap.empty) break
       const delBatch = db().batch()
-      antigosVenda.docs.forEach(d => delBatch.delete(d.ref))
+      snap.docs.forEach(d => delBatch.delete(d.ref))
       await delBatch.commit().catch(() => {})
-      await log(`  🗑️ ${antigosVenda.size} registos antigos removidos`)
+      totalRemovidosVenda += snap.size
     }
+    if (totalRemovidosVenda > 0) await log(`  🗑️ ${totalRemovidosVenda} registos de vendas antigos removidos`)
     const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
@@ -355,6 +358,17 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
     // ─── Compras por Artigo ───────────────────────────────────────────────
     await log('📉 Compras por Artigo (CSV)...')
+    // Limpa coleção antes de reimportar
+    let totalRemovidosCompra = 0
+    for (let tentativa = 0; tentativa < 10; tentativa++) {
+      const snap = await db().collection('movimentos_compra').limit(400).get().catch(() => null)
+      if (!snap || snap.empty) break
+      const delBatch = db().batch()
+      snap.docs.forEach(d => delBatch.delete(d.ref))
+      await delBatch.commit().catch(() => {})
+      totalRemovidosCompra += snap.size
+    }
+    if (totalRemovidosCompra > 0) await log(`  🗑️ ${totalRemovidosCompra} registos de compras antigos removidos`)
     const csvCompras = await exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',

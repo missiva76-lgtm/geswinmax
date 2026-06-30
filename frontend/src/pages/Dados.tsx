@@ -354,7 +354,7 @@ export default function Dados() {
               {!loading && vendasFiltradas.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
               )}
-              {vendasFiltradas.filter(v => v.numero_doc).map((v, i) => (
+              {vendasFiltradas.filter(v => v.numero_doc && v.artigo_codigo).map((v, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-xs text-gray-600">{v.data}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{v.numero_doc}</td>
