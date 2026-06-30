@@ -3,16 +3,6 @@ import { FileSpreadsheet, Package, RefreshCw, AlertCircle, CheckCircle, Clock, B
 import { getJobs, getFaturas, getArtigos, getArquivo, getSaft } from '../services/api'
 import { Job, FaturaResultado } from '../types'
 
-function Stat({ label, value, cor }: { label: string; value: string | number; cor?: string }) {
-  return (
-    <div className="bg-white border border-gray-100 rounded-xl p-4">
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className={`text-2xl font-semibold ${cor || 'text-gray-900'}`}>{value}</p>
-    </div>
-  )
-}
-
-// Converte timestamp Firestore (seconds ou _seconds) para Date
 function tsToDate(ts: any): Date | null {
   if (!ts) return null
   const secs = ts.seconds ?? ts._seconds ?? ts
@@ -33,13 +23,18 @@ const TIPO_LABEL: Record<string, string> = {
   arquivo: 'Arquivo Digital',
 }
 
+const TIPO_COR: Record<string, string> = {
+  emissao: 'bg-blue-100 text-blue-700',
+  sync:    'bg-teal-100 text-teal-700',
+  saft:    'bg-orange-100 text-orange-700',
+  arquivo: 'bg-purple-100 text-purple-700',
+}
+
 export default function Dashboard() {
   const [jobs, setJobs]       = useState<Job[]>([])
   const [faturas, setFaturas] = useState<FaturaResultado[]>([])
   const [loading, setLoading] = useState(true)
-  const [modulos, setModulos] = useState({
-    artigos: 0, arquivo: 0, saft: 0
-  })
+  const [modulos, setModulos] = useState({ artigos: 0, arquivo: 0, saft: 0 })
 
   const carregar = async () => {
     setLoading(true)
@@ -61,86 +56,85 @@ export default function Dashboard() {
   const jobsHoje   = jobs.filter(j => {
     const d = tsToDate(j.criado_em)
     if (!d) return false
-    const hoje = new Date()
-    return d.toDateString() === hoje.toDateString()
+    return d.toDateString() === new Date().toDateString()
   }).length
 
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Dashboard</h2>
-          <p className="text-sm text-gray-400">GesWinmax — AUTOAVENIDA</p>
+          <h2 className="text-2xl font-bold text-gray-800 uppercase tracking-wide">Dashboard</h2>
+          <p className="text-sm text-gray-400 mt-0.5">GesWinmax — AUTOAVENIDA</p>
         </div>
         <button onClick={carregar} disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors">
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''}/>
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-all"
+          style={{ background: '#0d7b6b' }}>
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''}/>
           Atualizar
         </button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <Stat label="Faturas emitidas" value={emitidas} cor="text-green-600"/>
-        <Stat label="Com erro"         value={erros}    cor={erros > 0 ? 'text-red-500' : 'text-gray-900'}/>
-        <Stat label="Jobs hoje"        value={jobsHoje}/>
-        <Stat label="Última sync"      value={ultimaSync ? fmtDate(ultimaSync.criado_em, { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}/>
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        {[
+          { label: 'Faturas emitidas', value: emitidas, cor: '#0d7b6b', bg: '#f0fdf4' },
+          { label: 'Com erro',         value: erros,    cor: erros > 0 ? '#dc2626' : '#6b7280', bg: erros > 0 ? '#fef2f2' : '#f9fafb' },
+          { label: 'Jobs hoje',        value: jobsHoje, cor: '#2563eb', bg: '#eff6ff' },
+          { label: 'Última sync',      value: ultimaSync ? fmtDate(ultimaSync.criado_em, { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—', cor: '#7c3aed', bg: '#f5f3ff' },
+        ].map((s, i) => (
+          <div key={i} className="rounded-xl p-4 border" style={{ background: s.bg, borderColor: s.cor + '30' }}>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">{s.label}</p>
+            <p className="text-2xl font-bold" style={{ color: s.cor }}>{s.value}</p>
+          </div>
+        ))}
       </div>
 
-      {/* Indicadores de módulos */}
-      <div className="grid grid-cols-3 gap-3 mb-6">
-        <div className="bg-white border border-gray-100 rounded-xl p-4 flex items-center gap-3">
-          <div className="p-2 bg-purple-50 rounded-lg"><Database size={16} className="text-purple-500"/></div>
-          <div>
-            <p className="text-xs text-gray-500">Dados WinMax4</p>
-            <p className="text-lg font-semibold text-gray-800">{modulos.artigos > 0 ? `${modulos.artigos} artigos` : '—'}</p>
-            <p className="text-xs text-gray-400">{modulos.artigos > 0 ? '✅ Sincronizado' : '⚠️ Sem dados'}</p>
-          </div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-xl p-4 flex items-center gap-3">
-          <div className="p-2 bg-blue-50 rounded-lg"><Archive size={16} className="text-blue-500"/></div>
-          <div>
-            <p className="text-xs text-gray-500">Arquivo Digital</p>
-            <p className="text-lg font-semibold text-gray-800">{modulos.arquivo > 0 ? `${modulos.arquivo} docs` : '—'}</p>
-            <p className="text-xs text-gray-400">{modulos.arquivo > 0 ? '✅ Importado' : '⚠️ Sem dados'}</p>
-          </div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-xl p-4 flex items-center gap-3">
-          <div className="p-2 bg-orange-50 rounded-lg"><BarChart2 size={16} className="text-orange-500"/></div>
-          <div>
-            <p className="text-xs text-gray-500">SAF-T</p>
-            <p className="text-lg font-semibold text-gray-800">{modulos.saft > 0 ? `${modulos.saft} registos` : '—'}</p>
-            <p className="text-xs text-gray-400">{modulos.saft > 0 ? '✅ Importado' : '⚠️ Sem dados'}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white border border-gray-100 rounded-xl">
-        <div className="px-5 py-3.5 border-b border-gray-50">
-          <p className="text-sm font-medium text-gray-700">Jobs recentes</p>
-        </div>
-        {loading && (
-          <p className="px-5 py-8 text-sm text-gray-400 text-center">A carregar...</p>
-        )}
-        {!loading && jobs.length === 0 && (
-          <p className="px-5 py-8 text-sm text-gray-400 text-center">Sem jobs ainda</p>
-        )}
-        {jobs.slice(0, 15).map((job) => (
-          <div key={job.id} className="flex items-center gap-3 px-5 py-3 border-b border-gray-50 last:border-0">
-            {job.tipo === 'emissao' && <FileSpreadsheet size={14} className="text-blue-400 shrink-0"/>}
-            {job.tipo === 'sync'    && <Package         size={14} className="text-purple-400 shrink-0"/>}
-            {job.tipo === 'saft'    && <BarChart2       size={14} className="text-orange-400 shrink-0"/>}
-            {!['emissao','sync','saft'].includes(job.tipo) && <Package size={14} className="text-gray-400 shrink-0"/>}
-            <div className="flex-1 min-w-0">
-              <p className="text-sm text-gray-800">{TIPO_LABEL[job.tipo] || job.tipo}</p>
-              <p className="text-xs text-gray-400">{fmtDate(job.criado_em)}</p>
+      {/* Módulos */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        {[
+          { label: 'Dados WinMax4', icon: Database, valor: modulos.artigos > 0 ? `${modulos.artigos} artigos` : '—', ok: modulos.artigos > 0, cor: '#7c3aed' },
+          { label: 'Arquivo Digital', icon: Archive, valor: modulos.arquivo > 0 ? `${modulos.arquivo} docs` : '—', ok: modulos.arquivo > 0, cor: '#2563eb' },
+          { label: 'SAF-T', icon: BarChart2, valor: modulos.saft > 0 ? `${modulos.saft} registos` : '—', ok: modulos.saft > 0, cor: '#d97706' },
+        ].map((m, i) => (
+          <div key={i} className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 shadow-sm">
+            <div className="p-2.5 rounded-xl" style={{ background: m.cor + '15' }}>
+              <m.icon size={18} style={{ color: m.cor }}/>
             </div>
-            {job.estado === 'concluido' && <CheckCircle size={14} className="text-green-500"/>}
-            {job.estado === 'erro'      && <AlertCircle size={14} className="text-red-500"/>}
-            {job.estado === 'ativo'     && <Clock       size={14} className="text-blue-500 animate-pulse"/>}
-            <span className={`text-xs px-2 py-0.5 rounded-full
-              ${job.estado === 'concluido' ? 'bg-green-50 text-green-700' :
-                job.estado === 'erro'      ? 'bg-red-50 text-red-600'     :
-                job.estado === 'ativo'     ? 'bg-blue-50 text-blue-600'   :
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{m.label}</p>
+              <p className="text-base font-bold text-gray-800">{m.valor}</p>
+              <p className="text-xs mt-0.5" style={{ color: m.ok ? '#0d7b6b' : '#d97706' }}>
+                {m.ok ? '✓ Sincronizado' : '⚠ Sem dados'}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Jobs recentes */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-gray-50 flex items-center justify-between">
+          <p className="text-sm font-bold uppercase tracking-wide text-gray-700">Jobs recentes</p>
+          <span className="text-xs text-gray-400">{jobs.length} total</span>
+        </div>
+        {loading && <p className="px-5 py-8 text-sm text-gray-400 text-center">A carregar...</p>}
+        {!loading && jobs.length === 0 && <p className="px-5 py-8 text-sm text-gray-400 text-center">Sem jobs ainda</p>}
+        {(() => {
+          const seen: Record<string, number> = {}
+          return jobs.filter(j => { seen[j.tipo] = (seen[j.tipo]||0)+1; return seen[j.tipo] <= 2 })
+        })().map((job) => (
+          <div key={job.id} className="flex items-center gap-3 px-5 py-3 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors">
+            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${TIPO_COR[job.tipo] || 'bg-gray-100 text-gray-600'}`}>
+              {TIPO_LABEL[job.tipo] || job.tipo}
+            </span>
+            <p className="flex-1 text-xs text-gray-500">{fmtDate(job.criado_em)}</p>
+            {job.estado === 'concluido' && <CheckCircle size={15} className="text-teal-500"/>}
+            {job.estado === 'erro'      && <AlertCircle size={15} className="text-red-500"/>}
+            {job.estado === 'ativo'     && <Clock       size={15} className="text-blue-500 animate-pulse"/>}
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium
+              ${job.estado === 'concluido' ? 'bg-teal-50 text-teal-700' :
+                job.estado === 'erro'      ? 'bg-red-50 text-red-600'   :
+                job.estado === 'ativo'     ? 'bg-blue-50 text-blue-600' :
                                             'bg-gray-50 text-gray-600'}`}>
               {job.estado}
             </span>

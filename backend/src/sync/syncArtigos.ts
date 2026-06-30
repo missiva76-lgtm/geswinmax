@@ -16,13 +16,16 @@ const BASE = 'https://app102.winmax4.com'
 
 async function loginWinmax(page: Page, config: any): Promise<void> {
   const url = `${BASE}/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-  await page.goto(url, { waitUntil: 'networkidle' })
-  await page.waitForTimeout(2000)
+  console.log('[Sync] A navegar para WinMax4...')
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 })
+  console.log('[Sync] Página carregada, a aguardar UserAuthentication_content...')
+  await page.waitForTimeout(3000)
 
   await page.waitForFunction(
     () => !!document.getElementById('UserAuthentication_content'),
-    { timeout: 15000 }
+    { timeout: 90000 }
   )
+  console.log('[Sync] UserAuthentication_content encontrado')
 
   await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
     const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
@@ -33,16 +36,32 @@ async function loginWinmax(page: Page, config: any): Promise<void> {
     if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
   }, { user: config.utilizador || '', pass: config.password || '' })
 
+  console.log('[Sync] Credenciais preenchidas, a clicar Confirmar...')
   await page.waitForTimeout(300)
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 90000 }).catch((e) => {
+      console.log('[Sync] waitForNavigation falhou (pode ser normal):', e.message)
+    }),
     page.evaluate(() => {
       const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
   ])
-  await page.waitForTimeout(2000)
-  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 15000 })
+  console.log('[Sync] Pós-login, a aguardar Toolbox_content...')
+  await page.waitForTimeout(3000)
+  
+  // Verifica se ainda está no ecrã de login (credenciais erradas)
+  const aindaLogin = await page.evaluate(() => !!document.getElementById('UserAuthentication_content')).catch(() => false)
+  if (aindaLogin) {
+    const erro = await page.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      return f?.contentDocument?.body?.innerText?.substring(0, 200) || ''
+    }).catch(() => '')
+    console.log('[Sync] AINDA no ecrã de login! Texto:', erro)
+  }
+  
+  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 })
+  console.log('[Sync] Toolbox_content encontrado — login OK')
 }
 
 // Abre uma listagem, muda para CSV e faz download
@@ -121,7 +140,7 @@ async function exportarCSV(
   await page.waitForTimeout(300)
 
   // Aguarda o download
-  const downloadPromise = page.waitForEvent('download', { timeout: opts?.timeout || 30000 })
+  const downloadPromise = page.waitForEvent('download', { timeout: opts?.timeout || 60000 })
 
   // Confirma dentro do iframe
   await page.evaluate((id: string) => {
@@ -176,10 +195,36 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
   const config  = await getConfig()
   const company = config.company_code || 'AUTOAVENIDA'
-  const dataInicio = (config.sync_data_inicio || '01-01-2000').replace(/-/g, '/')
-  const dataFim    = (config.sync_data_fim || new Date().toLocaleDateString('pt-PT').replace(/\//g,'-')).replace(/-/g,'/')
 
-  await log(`🔄 Sync WinMax4: ${dataInicio} → ${dataFim}`)
+  // Sync incremental: usa a data da última sync bem-sucedida (menos 2 dias de margem)
+  // em vez de sempre reimportar desde sync_data_inicio
+  let dataInicio = (config.sync_data_inicio || '01-01-2000').replace(/-/g, '/')
+  const ultimaSyncSnap = await db().collection('sync_log')
+    .where('tipo', '==', 'winmax_completa')
+    .orderBy('criado_em', 'desc')
+    .limit(1)
+    .get()
+    .catch(() => null)
+
+  if (ultimaSyncSnap && !ultimaSyncSnap.empty) {
+    const ultima = ultimaSyncSnap.docs[0].data()
+    const ultimaData = ultima.criado_em?.toDate?.() || null
+    if (ultimaData) {
+      const margem = new Date(ultimaData)
+      margem.setDate(margem.getDate() - 2) // 2 dias de margem para apanhar alterações tardias
+      const incrementalStr = margem.toLocaleDateString('pt-PT') // DD/MM/YYYY
+      // Usa o incremental apenas se for mais recente que o configurado (evita andar para trás)
+      const [di, mi, yi] = dataInicio.split('/').map(Number)
+      const dataInicioObj = new Date(yi, mi - 1, di)
+      if (margem > dataInicioObj) {
+        dataInicio = incrementalStr
+      }
+    }
+  }
+
+  const dataFim = (config.sync_data_fim || new Date().toLocaleDateString('pt-PT').replace(/\//g,'-')).replace(/-/g,'/')
+
+  await log(`🔄 Sync WinMax4 (incremental): ${dataInicio} → ${dataFim}`)
 
   let browser: Browser | null = null
   try {
@@ -195,10 +240,10 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
     const now = admin.firestore.FieldValue.serverTimestamp()
 
-    // Função para commit em batches de 400 (limite Firestore é 500)
+    // Função para commit em batches (tamanho reduzido + pausa entre batches para não sobrecarregar Firestore)
     const commitBatches = async (ops: Array<{ col: string; id: string; data: Record<string, unknown> }>) => {
       if (ops.length === 0) { await log('  ⚠️ Sem operações para guardar'); return }
-      const SIZE = 400
+      const SIZE = 250
       for (let i = 0; i < ops.length; i += SIZE) {
         const chunk = ops.slice(i, i + SIZE)
         try {
@@ -206,12 +251,16 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           for (const op of chunk) {
             batch.set(db().collection(op.col).doc(op.id), op.data, { merge: true })
           }
-          await batch.commit()
+          await Promise.race([
+            batch.commit(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 45s no batch')), 45000))
+          ])
           await log(`  ✅ Batch ${Math.floor(i/SIZE)+1}/${Math.ceil(ops.length/SIZE)} guardado (${chunk.length} docs)`)
         } catch (e) {
-          await log(`  ❌ Erro no batch ${Math.floor(i/SIZE)+1}: ${e}`)
-          throw e
+          await log(`  ⚠️ Batch ${Math.floor(i/SIZE)+1} falhou (a continuar): ${e}`)
         }
+        // Pequena pausa entre batches para aliviar pressão sobre o Firestore
+        await new Promise(r => setTimeout(r, 500))
       }
     }
 
@@ -221,7 +270,8 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     if (csvArtigos) {
       const artigos = parsearCSV(csvArtigos)
       await log(`  → ${artigos.length} artigos | TODOS headers: ${Object.keys(artigos[0] || {}).join(' | ')}`)
-      if (artigos[0]) await log(`  → Exemplo artigo: ${JSON.stringify(Object.entries(artigos[0]).slice(0,8))}`)
+      const artigoTeste = artigos.find(a => a['ArticleCode'] === '0.009.4683.0') || artigos[10] || artigos[0]
+      if (artigoTeste) await log(`  → Stock/Preço (${artigoTeste['ArticleCode']}): ${JSON.stringify({CurrentStock: artigoTeste['CurrentStock'], ArticleBatchCurrentStock: artigoTeste['ArticleBatchCurrentStock'], SalePrice1: artigoTeste['SalePrice1WithoutTaxesFees'], NetCost: artigoTeste['NetCostPrice'], IsActive: artigoTeste['IsActive']})}`)
       const ops = artigos.flatMap(a => {
         const codigo = a['ArticleCode'] || a['Code'] || a['Código'] || a['Artigo'] || a['Ref'] || a['Referência'] || Object.values(a)[0]
         if (!codigo) return []
@@ -237,7 +287,7 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           tipo:             a['ArticleType'] || '',
           ativo:            a['IsActive'] === 'True' || a['IsActive'] === '1',
           unidade:          a['StockUnitCode'] || '',
-          stock:            parseFloat((a['CurrentStock'] || '0').replace(',','.')) || 0,
+          stock:            parseFloat((a['CurrentStock'] || a['Stock'] || a['ArticleBatchCurrentStock'] || '0').replace(',','.')) || 0,
           preco_custo:      parseFloat((a['NetCostPrice'] || '0').replace(',','.')) || 0,
           preco_sem_iva:    precoSemIva,
           preco_com_iva:    Math.round(precoComIva * 100) / 100,
@@ -254,6 +304,18 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
     // ─── Vendas por Artigo ────────────────────────────────────────────────
     await log('📈 Vendas por Artigo (CSV)...')
+    // Limpa coleção antes de reimportar (evita registos órfãos de syncs antigas com mapeamento diferente)
+    await log('  🗑️ A limpar movimentos_venda antigos...')
+    let totalRemovidosVenda = 0
+    for (let tentativa = 0; tentativa < 10; tentativa++) {
+      const snap = await db().collection('movimentos_venda').limit(400).get().catch(() => null)
+      if (!snap || snap.empty) break
+      const delBatch = db().batch()
+      snap.docs.forEach(d => delBatch.delete(d.ref))
+      await delBatch.commit().catch(() => {})
+      totalRemovidosVenda += snap.size
+    }
+    if (totalRemovidosVenda > 0) await log(`  🗑️ ${totalRemovidosVenda} registos de vendas antigos removidos`)
     const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
@@ -264,38 +326,49 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       await log(`  → ${vendas.length} linhas vendas | headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
       if (vendas[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(vendas[0]).slice(0,8))}`)
       const ops = vendas.flatMap(v => {
-        const id = `${v['DocumentID'] || v['Nº Doc'] || v['Documento'] || ''}_${v['DocumentDate'] || v['Data'] || ''}`.replace(/[\/\\]/g,'_')
-        if (!id || id === '_') return []
+        const id = `${v['Document'] || v['DocumentID'] || ''}_${v['ArticleCode'] || ''}_${v['DocumentDate'] || ''}`.split('/').join('_')
+        if (!v['DocumentDate'] || !v['ArticleCode']) return []
+        const qtd = parseFloat((v['Quantity'] || '0').replace(',','.')) || 0
+        const precoUnitSemIva = parseFloat((v['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0
+        // O campo "Total" do CSV SalesArticleMovements é SEM IVA (confirmado: ≈ preço unit. x qtd)
+        const totalSemIva = parseFloat((v['Total'] || '0').replace(',','.')) || (precoUnitSemIva * qtd)
+        const taxaIva = parseFloat((v['TaxFeeRatePercentage'] || '23').replace(',','.')) || 23
+        const totalComIva = Math.round(totalSemIva * (1 + taxaIva / 100) * 100) / 100
         return [{ col: 'movimentos_venda', id, data: {
           data:             v['DocumentDate'] || '',
-          numero_doc:       v['DocumentNumber'] || '',
-          tipo_doc:         v['DocumentCode'] || '',
-          cliente_codigo:   v['CustomerCode'] || '',
-          cliente_nome:     v['CustomerName'] || '',
-          cliente_nif:      v['CustomerTaxPayerNumber'] || '',
+          numero_doc:       v['Document'] || v['DocumentID'] || '',
+          cliente_codigo:   v['EntityCode'] || '',
+          cliente_nome:     v['EntityName'] || '',
+          artigo_codigo:    v['ArticleCode'] || '',
+          artigo_descricao: v['ArticleDesignation'] || '',
+          familia:          v['FamilyDesignation'] || '',
+          quantidade:       qtd,
+          preco_unitario:   precoUnitSemIva,
+          total:            totalComIva,
+          total_sem_iva:    Math.round(totalSemIva * 100) / 100,
           vendedor:         v['SalesPersonName'] || '',
-          total:            parseFloat((v['Total'] || '0').replace(',','.')) || 0,
-          total_sem_iva:    parseFloat((v['TotalWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
-          total_iva:        parseFloat((v['TotalTaxesApplied'] || '0').replace(',','.')) || 0,
-          total_liquidado:  parseFloat((v['TotalLiquidated'] || '0').replace(',','.')) || 0,
-          moeda:            v['CurrencyCode'] || 'EUR',
-          pago:             v['Paid'] === 'True' || v['Paid'] === '1',
           ultima_sync:      now,
         }}]
       })
-      await log(`  → ${ops.length} ops geradas para Firestore`)
-      if (ops.length > 0) {
-        await commitBatches(ops)
-      } else {
-        await log('  ⚠️ Nenhuma operação válida — verificar headers do CSV')
-        // Log primeira linha para diagnóstico
-        if (vendas[0]) await log(`  → Primeira linha: ${JSON.stringify(Object.entries(vendas[0]).slice(0,4))}`)
-      }
+      await commitBatches(ops)
       fs.rmSync(csvVendas, { force: true })
+    } else {
+      await log('  ⚠️ Sem CSV de vendas (timeout ou sem dados)')
     }
 
     // ─── Compras por Artigo ───────────────────────────────────────────────
     await log('📉 Compras por Artigo (CSV)...')
+    // Limpa coleção antes de reimportar
+    let totalRemovidosCompra = 0
+    for (let tentativa = 0; tentativa < 10; tentativa++) {
+      const snap = await db().collection('movimentos_compra').limit(400).get().catch(() => null)
+      if (!snap || snap.empty) break
+      const delBatch = db().batch()
+      snap.docs.forEach(d => delBatch.delete(d.ref))
+      await delBatch.commit().catch(() => {})
+      totalRemovidosCompra += snap.size
+    }
+    if (totalRemovidosCompra > 0) await log(`  🗑️ ${totalRemovidosCompra} registos de compras antigos removidos`)
     const csvCompras = await exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
@@ -306,20 +379,28 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       const compras = parsearCSV(csvCompras)
       await log(`  → ${compras.length} linhas compras | headers: ${Object.keys(compras[0] || {}).join(' | ')}`)
       if (compras[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(compras[0]).slice(0,8))}`)
-      const ops = compras.flatMap(c => {
-        const id = `${c['Nº Doc'] || ''}_${c['Artigo'] || ''}_${c['Data'] || ''}`.replace(/[\/\\]/g,'_')
+      const opsCompras = compras.flatMap(c => {
+        const id = `${c['Document'] || ''}_${c['ArticleCode'] || ''}_${c['DocumentDate'] || ''}`.split('/').join('_')
         if (!id || id === '__') return []
+        const totalSemIva = parseFloat((c['TotalWithoutTaxes'] || '0').replace(',','.')) || 0
+        const totalComIva = parseFloat((c['TotalWithTaxes'] || c['Total'] || '0').replace(',','.')) || totalSemIva
         return [{ col: 'movimentos_compra', id, data: {
-          data: c['Data'] || '', numero_doc: c['Nº Doc'] || '', tipo_doc: c['Tipo'] || '',
-          fornecedor_codigo: c['Cód. Fornecedor'] || c['Fornecedor'] || '', fornecedor_nome: c['Nome'] || '',
-          artigo_codigo: c['Artigo'] || c['Código'] || '', artigo_descricao: c['Descrição'] || c['Designação'] || '',
-          quantidade: parseFloat((c['Qtd'] || c['Quantidade'] || '0').replace(',','.')) || 0,
-          preco_unitario: parseFloat((c['Preço'] || '0').replace(',','.')) || 0,
-          total: parseFloat((c['Total'] || c['Valor'] || '0').replace(',','.')) || 0,
+          data:              c['DocumentDate'] || '',
+          numero_doc:        c['Document'] || '',
+          fornecedor_codigo: c['EntityCode'] || '',
+          fornecedor_nome:   c['EntityName'] || '',
+          artigo_codigo:     c['ArticleCode'] || '',
+          artigo_descricao:  c['ArticleDesignation'] || '',
+          familia:           c['FamilyDesignation'] || '',
+          quantidade:        parseFloat((c['Quantity'] || '0').replace(',','.')) || 0,
+          preco_unitario:    parseFloat((c['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
+          total:             totalComIva,
+          total_sem_iva:     totalSemIva,
+          vendedor:          c['SalesPersonName'] || '',
           ultima_sync: now,
         }}]
       })
-      await commitBatches(ops)
+      await commitBatches(opsCompras)
       fs.rmSync(csvCompras, { force: true })
     } else {
       await log('  ⚠️ Sem CSV de compras (timeout ou sem dados)')

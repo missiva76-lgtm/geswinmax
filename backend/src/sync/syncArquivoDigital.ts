@@ -55,7 +55,7 @@ async function abrirArquivoDigital(page: Page): Promise<void> {
   await page.waitForTimeout(2000)
   await page.waitForFunction(
     () => !!document.getElementById('utilsDigitalArchive_content'),
-    { timeout: 30000 }
+    { timeout: 60000 }
   )
 }
 
@@ -192,13 +192,13 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     // O WinMax4 abre sempre no MainPage com um iframe de autenticação UserAuthentication_content
     // Campos: txtUserLogin / txtUserPassword — botão: wucButtonConfirm_linkButton1
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-    await page.goto(url, { waitUntil: 'networkidle' })
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(2000)
 
     // Aguarda o iframe de autenticação
     await page.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 15000 }
+      { timeout: 60000 }
     )
 
     // Preenche no iframe de autenticação

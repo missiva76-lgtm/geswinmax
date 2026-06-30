@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { TrendingUp, Users, Package, Euro, RefreshCw, Calendar } from 'lucide-react'
 import { triggerSyncArquivo } from '../services/api'
+import ServerWakingBanner from '../components/ServerWakingBanner'
 
 const API = import.meta.env.VITE_API_URL || '/api'
 
@@ -67,10 +68,11 @@ export default function SAFTDashboard() {
   const [diInput, setDiInput]   = useState('')
   const [dfInput, setDfInput]   = useState('')
   const [tab, setTab]           = useState<'vendas' | 'clientes' | 'artigos'>('vendas')
+  const [serverError, setServerError] = useState<Error | null>(null)
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/saft`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/saft`).then(r => r.json()).catch((e) => { setServerError(e); return [] }),
       fetch(`${API}/saft/mensal`).then(r => r.json()).catch(() => []),
     ]).then(([r, m]) => {
       setResumos(r)
@@ -79,13 +81,28 @@ export default function SAFTDashboard() {
     })
   }, [])
 
+  const recarregar = () => { setServerError(null); setLoading(true) }
+
   const handleSync = async () => {
     setSyncing(true)
-    await triggerSyncSAFT(diInput || undefined, dfInput || undefined).catch(() => {})
-    setTimeout(() => {
+    const r = await triggerSyncSAFT(diInput || undefined, dfInput || undefined).catch(() => null)
+    const jobId = r?.jobId
+    if (!jobId) {
       setSyncing(false)
-      window.location.reload()
-    }, 8000)
+      return
+    }
+    // Faz polling do job até concluir (em vez de esperar tempo fixo)
+    const poll = async (tentativas = 0): Promise<void> => {
+      if (tentativas > 40) { setSyncing(false); return } // máx ~2min
+      const job = await fetch(`${API}/jobs/${jobId}`).then(r => r.json()).catch(() => null)
+      if (job?.estado === 'concluido' || job?.estado === 'erro') {
+        setSyncing(false)
+        window.location.reload()
+        return
+      }
+      setTimeout(() => poll(tentativas + 1), 3000)
+    }
+    poll()
   }
 
   const ultimo = resumos[0]
