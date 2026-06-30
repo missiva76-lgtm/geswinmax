@@ -244,7 +244,7 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     if (csvArtigos) {
       const artigos = parsearCSV(csvArtigos)
       await log(`  → ${artigos.length} artigos | TODOS headers: ${Object.keys(artigos[0] || {}).join(' | ')}`)
-      if (artigos[0]) await log(`  → Exemplo artigo: ${JSON.stringify(Object.entries(artigos[0]).slice(0,8))}`)
+      if (artigos[0]) await log(`  → Stock/Preço: ${JSON.stringify({CurrentStock: artigos[0]['CurrentStock'], Stock: artigos[0]['Stock'], SalePrice1: artigos[0]['SalePrice1WithoutTaxesFees'], NetCost: artigos[0]['NetCostPrice'], PurchaseTax: artigos[0]['PurchaseTaxesToShow']})}`)
       const ops = artigos.flatMap(a => {
         const codigo = a['ArticleCode'] || a['Code'] || a['Código'] || a['Artigo'] || a['Ref'] || a['Referência'] || Object.values(a)[0]
         if (!codigo) return []
@@ -260,7 +260,7 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           tipo:             a['ArticleType'] || '',
           ativo:            a['IsActive'] === 'True' || a['IsActive'] === '1',
           unidade:          a['StockUnitCode'] || '',
-          stock:            parseFloat((a['CurrentStock'] || '0').replace(',','.')) || 0,
+          stock:            parseFloat((a['CurrentStock'] || a['Stock'] || a['ArticleBatchCurrentStock'] || '0').replace(',','.')) || 0,
           preco_custo:      parseFloat((a['NetCostPrice'] || '0').replace(',','.')) || 0,
           preco_sem_iva:    precoSemIva,
           preco_com_iva:    Math.round(precoComIva * 100) / 100,
@@ -288,7 +288,11 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       if (vendas[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(vendas[0]).slice(0,8))}`)
       const ops = vendas.flatMap(v => {
         const id = `${v['Document'] || v['DocumentID'] || ''}_${v['ArticleCode'] || ''}_${v['DocumentDate'] || ''}`.split('/').join('_')
-        if (!id || id === '__') return []
+        if (!v['DocumentDate'] || !v['ArticleCode']) return []
+        const qtd = parseFloat((v['Quantity'] || '0').replace(',','.')) || 0
+        const precoUnitSemIva = parseFloat((v['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0
+        const totalComIva = parseFloat((v['Total'] || '0').replace(',','.')) || 0
+        const totalSemIva = parseFloat((v['TotalWithoutTaxes'] || '0').replace(',','.')) || (precoUnitSemIva * qtd) || totalComIva
         return [{ col: 'movimentos_venda', id, data: {
           data:             v['DocumentDate'] || '',
           numero_doc:       v['Document'] || v['DocumentID'] || '',
@@ -297,10 +301,10 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           artigo_codigo:    v['ArticleCode'] || '',
           artigo_descricao: v['ArticleDesignation'] || '',
           familia:          v['FamilyDesignation'] || '',
-          quantidade:       parseFloat((v['Quantity'] || '0').replace(',','.')) || 0,
-          preco_unitario:   parseFloat((v['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
-          total:            parseFloat((v['Total'] || '0').replace(',','.')) || 0,
-          total_sem_iva:    parseFloat((v['TotalWithoutTaxes'] || '0').replace(',','.')) || 0,
+          quantidade:       qtd,
+          preco_unitario:   precoUnitSemIva,
+          total:            totalComIva,
+          total_sem_iva:    Math.round(totalSemIva * 100) / 100,
           vendedor:         v['SalesPersonName'] || '',
           ultima_sync:      now,
         }}]
@@ -326,6 +330,8 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       const opsCompras = compras.flatMap(c => {
         const id = `${c['Document'] || ''}_${c['ArticleCode'] || ''}_${c['DocumentDate'] || ''}`.split('/').join('_')
         if (!id || id === '__') return []
+        const totalSemIva = parseFloat((c['TotalWithoutTaxes'] || '0').replace(',','.')) || 0
+        const totalComIva = parseFloat((c['TotalWithTaxes'] || c['Total'] || '0').replace(',','.')) || totalSemIva
         return [{ col: 'movimentos_compra', id, data: {
           data:              c['DocumentDate'] || '',
           numero_doc:        c['Document'] || '',
@@ -336,8 +342,8 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           familia:           c['FamilyDesignation'] || '',
           quantidade:        parseFloat((c['Quantity'] || '0').replace(',','.')) || 0,
           preco_unitario:    parseFloat((c['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
-          total:             parseFloat((c['Total'] || '0').replace(',','.')) || 0,
-          total_sem_iva:     parseFloat((c['TotalWithoutTaxes'] || '0').replace(',','.')) || 0,
+          total:             totalComIva,
+          total_sem_iva:     totalSemIva,
           vendedor:          c['SalesPersonName'] || '',
           ultima_sync: now,
         }}]
