@@ -225,15 +225,15 @@ export async function syncWinmax(jobId?: string): Promise<void> {
           for (const op of chunk) {
             batch.set(db().collection(op.col).doc(op.id), op.data, { merge: true })
           }
-          // Timeout de 30s por batch para evitar bloqueio por quota
+          // Timeout de 45s por batch para evitar bloqueio total
           await Promise.race([
             batch.commit(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 30s no batch')), 30000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 45s no batch')), 45000))
           ])
           await log(`  ✅ Batch ${Math.floor(i/SIZE)+1}/${Math.ceil(ops.length/SIZE)} guardado (${chunk.length} docs)`)
         } catch (e) {
-          await log(`  ❌ Erro no batch ${Math.floor(i/SIZE)+1}: ${e}`)
-          throw e
+          await log(`  ⚠️ Batch ${Math.floor(i/SIZE)+1} falhou (a continuar): ${e}`)
+          // Não aborta — continua para os próximos batches
         }
       }
     }
