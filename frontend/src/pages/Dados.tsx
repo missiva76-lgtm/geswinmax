@@ -141,14 +141,16 @@ export default function Dados() {
   const resumoCalculado: ArticlePurchaseSale[] = (() => {
     const mapa: Record<string, ArticlePurchaseSale> = {}
     for (const venda of vendasFiltradas) {
-      const k = venda.artigo_codigo || venda.numero_doc || '?'
+      if (!venda.artigo_codigo) continue
+      const k = venda.artigo_codigo
       if (!mapa[k]) mapa[k] = { artigo_codigo: k, artigo_descricao: venda.artigo_descricao || '', familia: venda.familia || '', total_vendas: 0, total_vendas_sem_iva: 0, total_compras: 0, total_compras_sem_iva: 0, qtd_vendas: 0, qtd_compras: 0 }
       mapa[k].total_vendas! += venda.total || 0
       mapa[k].total_vendas_sem_iva! += venda.total_sem_iva || venda.total || 0
       mapa[k].qtd_vendas! += venda.quantidade || 1
     }
     for (const compra of comprasFiltradas) {
-      const k = compra.artigo_codigo || compra.numero_doc || '?'
+      if (!compra.artigo_codigo) continue
+      const k = compra.artigo_codigo
       if (!mapa[k]) mapa[k] = { artigo_codigo: k, artigo_descricao: compra.artigo_descricao || '', familia: compra.familia || '', total_vendas: 0, total_vendas_sem_iva: 0, total_compras: 0, total_compras_sem_iva: 0, qtd_vendas: 0, qtd_compras: 0 }
       mapa[k].total_compras! += compra.total || 0
       mapa[k].total_compras_sem_iva! += compra.total_sem_iva || compra.total || 0
@@ -218,6 +220,7 @@ export default function Dados() {
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Dados WinMax4</h2>
           <p className="text-sm text-gray-400">Artigos, existências e movimentos sincronizados</p>
+          <p className="text-xs text-gray-300 mt-0.5">💡 Em "Artigos" os valores são <strong>unitários</strong>. Em "Movimentos" e "Resumo" os valores são <strong>totais por linha/documento</strong>.</p>
         </div>
         <div className="flex gap-2">
           {temDados && (
@@ -296,9 +299,9 @@ export default function Dados() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Código</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Descrição</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">IVA</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Compra S/IVA</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">S/ IVA</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">C/ IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Compra (unit. S/IVA)</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Venda S/IVA (unit.)</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Venda C/IVA (unit.)</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Stock</th>
               </tr>
             </thead>
@@ -342,8 +345,8 @@ export default function Dados() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Artigo</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Cliente</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd.</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">S/ IVA</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total S/IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total C/IVA</th>
               </tr>
             </thead>
             <tbody>
@@ -351,7 +354,7 @@ export default function Dados() {
               {!loading && vendasFiltradas.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
               )}
-              {vendasFiltradas.map((v, i) => (
+              {vendasFiltradas.filter(v => v.numero_doc).map((v, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-xs text-gray-600">{v.data}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{v.numero_doc}</td>
@@ -380,8 +383,8 @@ export default function Dados() {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Fornecedor</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Artigo</th>
                 <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Qtd.</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">S/ IVA</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">C/ IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total S/IVA</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">Total C/IVA</th>
               </tr>
             </thead>
             <tbody>
@@ -389,7 +392,7 @@ export default function Dados() {
               {!loading && comprasFiltradas.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos. Faz uma sync primeiro.</td></tr>
               )}
-              {comprasFiltradas.map((c, i) => (
+              {comprasFiltradas.filter(c => c.numero_doc).map((c, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-xs text-gray-600">{c.data}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{c.numero_doc}</td>

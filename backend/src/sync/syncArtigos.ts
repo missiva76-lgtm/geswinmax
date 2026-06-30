@@ -304,6 +304,15 @@ export async function syncWinmax(jobId?: string): Promise<void> {
 
     // ─── Vendas por Artigo ────────────────────────────────────────────────
     await log('📈 Vendas por Artigo (CSV)...')
+    // Limpa coleção antes de reimportar (evita registos órfãos de syncs antigas com mapeamento diferente)
+    await log('  🗑️ A limpar movimentos_venda antigos...')
+    const antigosVenda = await db().collection('movimentos_venda').limit(2000).get().catch(() => null)
+    if (antigosVenda && !antigosVenda.empty) {
+      const delBatch = db().batch()
+      antigosVenda.docs.forEach(d => delBatch.delete(d.ref))
+      await delBatch.commit().catch(() => {})
+      await log(`  🗑️ ${antigosVenda.size} registos antigos removidos`)
+    }
     const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
