@@ -270,7 +270,8 @@ export async function syncWinmax(jobId?: string): Promise<void> {
     if (csvArtigos) {
       const artigos = parsearCSV(csvArtigos)
       await log(`  → ${artigos.length} artigos | TODOS headers: ${Object.keys(artigos[0] || {}).join(' | ')}`)
-      if (artigos[0]) await log(`  → Stock/Preço: ${JSON.stringify({CurrentStock: artigos[0]['CurrentStock'], Stock: artigos[0]['Stock'], SalePrice1: artigos[0]['SalePrice1WithoutTaxesFees'], NetCost: artigos[0]['NetCostPrice'], PurchaseTax: artigos[0]['PurchaseTaxesToShow']})}`)
+      const artigoTeste = artigos.find(a => a['ArticleCode'] === '0.009.4683.0') || artigos[10] || artigos[0]
+      if (artigoTeste) await log(`  → Stock/Preço (${artigoTeste['ArticleCode']}): ${JSON.stringify({CurrentStock: artigoTeste['CurrentStock'], ArticleBatchCurrentStock: artigoTeste['ArticleBatchCurrentStock'], SalePrice1: artigoTeste['SalePrice1WithoutTaxesFees'], NetCost: artigoTeste['NetCostPrice'], IsActive: artigoTeste['IsActive']})}`)
       const ops = artigos.flatMap(a => {
         const codigo = a['ArticleCode'] || a['Code'] || a['Código'] || a['Artigo'] || a['Ref'] || a['Referência'] || Object.values(a)[0]
         if (!codigo) return []
@@ -317,8 +318,10 @@ export async function syncWinmax(jobId?: string): Promise<void> {
         if (!v['DocumentDate'] || !v['ArticleCode']) return []
         const qtd = parseFloat((v['Quantity'] || '0').replace(',','.')) || 0
         const precoUnitSemIva = parseFloat((v['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0
-        const totalComIva = parseFloat((v['Total'] || '0').replace(',','.')) || 0
-        const totalSemIva = parseFloat((v['TotalWithoutTaxes'] || '0').replace(',','.')) || (precoUnitSemIva * qtd) || totalComIva
+        // O campo "Total" do CSV SalesArticleMovements é SEM IVA (confirmado: ≈ preço unit. x qtd)
+        const totalSemIva = parseFloat((v['Total'] || '0').replace(',','.')) || (precoUnitSemIva * qtd)
+        const taxaIva = parseFloat((v['TaxFeeRatePercentage'] || '23').replace(',','.')) || 23
+        const totalComIva = Math.round(totalSemIva * (1 + taxaIva / 100) * 100) / 100
         return [{ col: 'movimentos_venda', id, data: {
           data:             v['DocumentDate'] || '',
           numero_doc:       v['Document'] || v['DocumentID'] || '',
