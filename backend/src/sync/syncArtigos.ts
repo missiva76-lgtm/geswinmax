@@ -287,59 +287,22 @@ export async function syncWinmax(jobId?: string): Promise<void> {
       await log(`  → ${vendas.length} linhas vendas | headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
       if (vendas[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(vendas[0]).slice(0,8))}`)
       const ops = vendas.flatMap(v => {
-        const id = `${v['DocumentID'] || v['Nº Doc'] || v['Documento'] || ''}_${v['DocumentDate'] || v['Data'] || ''}`.replace(/[\/\\]/g,'_')
-        if (!id || id === '_') return []
+        const id = `${v['Document'] || v['DocumentID'] || ''}_${v['ArticleCode'] || ''}_${v['DocumentDate'] || ''}`.replace(/[\/\]/g,'_')
+        if (!id || id === '__') return []
         return [{ col: 'movimentos_venda', id, data: {
           data:             v['DocumentDate'] || '',
-          numero_doc:       v['DocumentNumber'] || '',
-          tipo_doc:         v['DocumentCode'] || '',
-          cliente_codigo:   v['CustomerCode'] || '',
-          cliente_nome:     v['CustomerName'] || '',
-          cliente_nif:      v['CustomerTaxPayerNumber'] || '',
-          vendedor:         v['SalesPersonName'] || '',
+          numero_doc:       v['Document'] || v['DocumentID'] || '',
+          cliente_codigo:   v['EntityCode'] || '',
+          cliente_nome:     v['EntityName'] || '',
+          artigo_codigo:    v['ArticleCode'] || '',
+          artigo_descricao: v['ArticleDesignation'] || '',
+          familia:          v['FamilyDesignation'] || '',
+          quantidade:       parseFloat((v['Quantity'] || '0').replace(',','.')) || 0,
+          preco_unitario:   parseFloat((v['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
           total:            parseFloat((v['Total'] || '0').replace(',','.')) || 0,
-          total_sem_iva:    parseFloat((v['TotalWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0,
-          total_iva:        parseFloat((v['TotalTaxesApplied'] || '0').replace(',','.')) || 0,
-          total_liquidado:  parseFloat((v['TotalLiquidated'] || '0').replace(',','.')) || 0,
-          moeda:            v['CurrencyCode'] || 'EUR',
-          pago:             v['Paid'] === 'True' || v['Paid'] === '1',
+          total_sem_iva:    parseFloat((v['TotalWithoutTaxes'] || '0').replace(',','.')) || 0,
+          vendedor:         v['SalesPersonName'] || '',
           ultima_sync:      now,
-        }}]
-      })
-      await log(`  → ${ops.length} ops geradas para Firestore`)
-      if (ops.length > 0) {
-        await commitBatches(ops)
-      } else {
-        await log('  ⚠️ Nenhuma operação válida — verificar headers do CSV')
-        // Log primeira linha para diagnóstico
-        if (vendas[0]) await log(`  → Primeira linha: ${JSON.stringify(Object.entries(vendas[0]).slice(0,4))}`)
-      }
-      fs.rmSync(csvVendas, { force: true })
-    }
-
-    // ─── Compras por Artigo ───────────────────────────────────────────────
-    await log('📉 Compras por Artigo (CSV)...')
-    const csvCompras = await exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
-      campoInicio: 'wucCalendarFromDate_txtModernDate',
-      campoFim:    'wucCalendarToDate_txtModernDate',
-      di: dataInicio, df: dataFim,
-      timeout: 60000,
-    })
-    if (csvCompras) {
-      const compras = parsearCSV(csvCompras)
-      await log(`  → ${compras.length} linhas compras | headers: ${Object.keys(compras[0] || {}).join(' | ')}`)
-      if (compras[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(compras[0]).slice(0,8))}`)
-      const ops = compras.flatMap(c => {
-        const id = `${c['Nº Doc'] || ''}_${c['Artigo'] || ''}_${c['Data'] || ''}`.replace(/[\/\\]/g,'_')
-        if (!id || id === '__') return []
-        return [{ col: 'movimentos_compra', id, data: {
-          data: c['Data'] || '', numero_doc: c['Nº Doc'] || '', tipo_doc: c['Tipo'] || '',
-          fornecedor_codigo: c['Cód. Fornecedor'] || c['Fornecedor'] || '', fornecedor_nome: c['Nome'] || '',
-          artigo_codigo: c['Artigo'] || c['Código'] || '', artigo_descricao: c['Descrição'] || c['Designação'] || '',
-          quantidade: parseFloat((c['Qtd'] || c['Quantidade'] || '0').replace(',','.')) || 0,
-          preco_unitario: parseFloat((c['Preço'] || '0').replace(',','.')) || 0,
-          total: parseFloat((c['Total'] || c['Valor'] || '0').replace(',','.')) || 0,
-          ultima_sync: now,
         }}]
       })
       await commitBatches(ops)
