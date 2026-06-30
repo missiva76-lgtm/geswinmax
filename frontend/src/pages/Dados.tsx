@@ -167,7 +167,7 @@ export default function Dados() {
         'Compra S/IVA (€)': (a as any).preco_custo || 0,
         'S/ IVA (€)': (a as any).preco_sem_iva || a.preco_venda,
         'C/ IVA (€)': (a as any).preco_com_iva || a.preco_venda,
-        'Stock':      a.existencias,
+        'Stock':      (a as any).stock ?? a.existencias,
       })), 'artigos')
     } else if (tab === 'vendas') {
       exportarExcel(vendasFiltradas.map(v => ({
@@ -319,8 +319,8 @@ export default function Dados() {
                   <td className="px-4 py-2.5 text-right text-gray-500 text-xs">{fmt((a as any).preco_sem_iva || a.preco_venda)}</td>
                   <td className="px-4 py-2.5 text-right text-gray-800 text-xs font-medium">{fmt((a as any).preco_com_iva || a.preco_venda)}</td>
                   <td className="px-4 py-2.5 text-right text-xs">
-                    {(a.existencias || 0) > 0
-                      ? <span className="text-teal-700 font-medium">{a.existencias}</span>
+                    {((a as any).stock ?? a.existencias ?? 0) > 0
+                      ? <span className="text-teal-700 font-medium">{(a as any).stock ?? a.existencias}</span>
                       : <span className="text-gray-400">—</span>}
                   </td>
                 </tr>
