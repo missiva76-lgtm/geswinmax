@@ -71,8 +71,22 @@ export default function Arquivo() {
 
   const handleSync = async () => {
     setSyncing(true)
-    await triggerSyncArquivo().catch(() => {})
-    setTimeout(() => { setSyncing(false); pesquisar(q) }, 10000)
+    const API = import.meta.env.VITE_API_URL || '/api'
+    const r = await fetch(`${API}/arquivo/sync`, { method: 'POST' }).then(res => res.json()).catch(() => null)
+    const jobId = r?.jobId
+    if (!jobId) { setSyncing(false); return }
+    // Polling até terminar
+    const poll = async (n = 0): Promise<void> => {
+      if (n > 120) { setSyncing(false); pesquisar(q); return }
+      const job = await fetch(`${API}/jobs/${jobId}`).then(res => res.json()).catch(() => null)
+      if (job?.estado === 'concluido' || job?.estado === 'erro') {
+        setSyncing(false)
+        pesquisar(q)
+        return
+      }
+      setTimeout(() => poll(n + 1), 3000)
+    }
+    poll()
   }
 
   // Filtragem local por tipo e datas
@@ -90,8 +104,11 @@ export default function Arquivo() {
     return true
   })
 
-  // PDF disponível apenas no WinMax4 (requer sessão autenticada)
-  const pdfDownloadUrl = (_ficheiro: string) => null
+  // URL de download autenticado via backend Playwright
+  const pdfDownloadUrl = (ficheiro: string) => {
+    if (!ficheiro) return null
+    return `https://geswinmax-backend-8oo6.onrender.com/api/arquivo/download/${encodeURIComponent(ficheiro)}`
+  }
 
   return (
     <div className="flex-1 overflow-auto p-6">
@@ -185,9 +202,10 @@ export default function Arquivo() {
                   </td>
                   <td className="px-4 py-2.5 text-center">
                     {urlPDF ? (
-                      <a href={urlPDF} download={doc.ficheiro}
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700">
-                        <Download size={13}/>
+                      <a href={urlPDF} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                        title="Ver PDF (pode demorar ~30-60s a carregar — requer login no WinMax4)">
+                        <FileText size={13}/> PDF
                       </a>
                     ) : (
                       <span className="text-gray-300 text-xs">—</span>

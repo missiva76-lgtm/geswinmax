@@ -10,6 +10,54 @@ interface TipoDoc {
   valor: string
 }
 
+const API = import.meta.env.VITE_API_URL || '/api'
+
+function SyncButton() {
+  const [estado, setEstado] = useState<'idle'|'running'|'done'|'erro'>('idle')
+  const [msg, setMsg] = useState('')
+
+  const handleSync = async () => {
+    if (!confirm('Confirmas a sincronização completa? Todos os dados serão apagados e reimportados do WinMax4.')) return
+    setEstado('running')
+    setMsg('A iniciar sync...')
+    try {
+      const r = await fetch(`${API}/sync`, { method: 'POST' }).then(res => res.json())
+      const jobId = r?.jobId
+      if (!jobId) throw new Error('Sem jobId')
+      setMsg('Sync em curso...')
+      const poll = async (n = 0): Promise<void> => {
+        if (n > 120) { setEstado('erro'); setMsg('Timeout — verifica o Dashboard'); return }
+        const job = await fetch(`${API}/jobs/${jobId}`).then(res => res.json()).catch(() => null)
+        if (job?.estado === 'concluido') { setEstado('done'); setMsg('✅ Sync concluída com sucesso!'); return }
+        if (job?.estado === 'erro') { setEstado('erro'); setMsg('❌ Erro na sync — verifica o Dashboard'); return }
+        setMsg(`Em curso... (${Math.round(n * 3)}s)`)
+        setTimeout(() => poll(n + 1), 3000)
+      }
+      poll()
+    } catch(e: any) {
+      setEstado('erro')
+      setMsg('Erro: ' + e.message)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <button onClick={handleSync} disabled={estado === 'running'}
+        className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg text-white transition-all disabled:opacity-50
+          ${estado === 'done' ? 'bg-green-600' : estado === 'erro' ? 'bg-red-600' : 'bg-amber-600 hover:bg-amber-700'}`}>
+        {estado === 'running' ? (
+          <><span className="animate-spin">⟳</span> A sincronizar...</>
+        ) : estado === 'done' ? (
+          <>✓ Sync concluída</>
+        ) : (
+          <>🔄 Sync Completo Agora</>
+        )}
+      </button>
+      {msg && <span className={`text-xs ${estado === 'erro' ? 'text-red-600' : estado === 'done' ? 'text-green-600' : 'text-amber-600'}`}>{msg}</span>}
+    </div>
+  )
+}
+
 export default function Configuracoes() {
   const [config, setConfig] = useState({
     winmax_url: 'https://app102.winmax4.com',
@@ -194,7 +242,20 @@ export default function Configuracoes() {
         </div>
       </div>
 
-      <div className="mt-6 flex items-center gap-3">
+      {/* Sync Completo */}
+      <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-5">
+        <p className="text-sm font-semibold text-amber-800 mb-1">🔄 Sincronização Completa</p>
+        <p className="text-xs text-amber-600 mb-4">
+          Limpa todos os dados existentes (artigos, movimentos) e reimporta tudo do WinMax4 desde a data de início configurada acima. 
+          Pode demorar 3-5 minutos.
+        </p>
+        <div className="flex items-center gap-3">
+          <SyncButton/>
+          <span className="text-xs text-amber-500">Use quando os dados parecerem incorretos ou desatualizados</span>
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-center gap-3">
         <button onClick={handleSave}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors">
           <Save size={14}/> Guardar configurações

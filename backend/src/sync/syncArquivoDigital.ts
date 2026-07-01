@@ -15,6 +15,7 @@
 // 8. Download PDF: clica lnkSelect de cada linha → download interceptado
 
 import { chromium, Browser, Page } from 'playwright'
+import { acquireBrowserLock } from '../services/browserLock'
 import * as admin from 'firebase-admin'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -55,7 +56,7 @@ async function abrirArquivoDigital(page: Page): Promise<void> {
   await page.waitForTimeout(2000)
   await page.waitForFunction(
     () => !!document.getElementById('utilsDigitalArchive_content'),
-    { timeout: 30000 }
+    { timeout: 60000 }
   )
 }
 
@@ -176,8 +177,10 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
   fs.mkdirSync(pastaPDFs, { recursive: true })
 
   let browser: Browser | null = null
+  let releaseLock: (() => void) | null = null
 
   try {
+    releaseLock = await acquireBrowserLock()
     browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
     const context = await browser.newContext({
       locale: 'pt-PT',
@@ -192,13 +195,13 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     // O WinMax4 abre sempre no MainPage com um iframe de autenticação UserAuthentication_content
     // Campos: txtUserLogin / txtUserPassword — botão: wucButtonConfirm_linkButton1
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-    await page.goto(url, { waitUntil: 'networkidle' })
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(2000)
 
     // Aguarda o iframe de autenticação
     await page.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 15000 }
+      { timeout: 60000 }
     )
 
     // Preenche no iframe de autenticação

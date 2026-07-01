@@ -18,6 +18,7 @@
 //   Ficheiro gerado: SAF-T-PT_YYYYMMDD_YYYYMMDD.XML
 
 import { chromium, Browser, Page } from 'playwright'
+import { acquireBrowserLock } from '../services/browserLock'
 import * as admin from 'firebase-admin'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -69,7 +70,7 @@ async function exportarSAFT(page: Page, dataInicio: string, dataFim: string): Pr
   if (!found) throw new Error('Atalho SAF-T não encontrado no Toolbox')
   await page.waitForTimeout(2000)
   await page.waitForFunction(
-    () => !!document.getElementById('utilsExportSAFTFile_content'), { timeout: 30000 })
+    () => !!document.getElementById('utilsExportSAFTFile_content'), { timeout: 60000 })
 
   // Configura o período "A definir" e as datas
   await page.evaluate(({ di, df }: { di: string; df: string }) => {
@@ -101,7 +102,7 @@ async function exportarSAFT(page: Page, dataInicio: string, dataFim: string): Pr
 
   // Confirma o MessageBox ("Confirma a exportação do ficheiro SAF-T?")
   await page.waitForFunction(
-    () => !!document.getElementById('UtilsExportSAFT_content'), { timeout: 8000 })
+    () => !!document.getElementById('UtilsExportSAFT_content'), { timeout: 60000 })
   await page.evaluate(() => {
     const mb = document.getElementById('UtilsExportSAFT_content') as HTMLIFrameElement
     ;(mb?.contentDocument?.getElementById('wucButtonYes_linkButton1') as HTMLElement)?.click()
@@ -255,8 +256,10 @@ export async function syncSAFT(
   fs.mkdirSync(pastaSAFT, { recursive: true })
 
   let browser: Browser | null = null
+  let releaseLock: (() => void) | null = null
 
   try {
+    releaseLock = await acquireBrowserLock()
     browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
     const context = await browser.newContext({
       locale: 'pt-PT',
@@ -271,13 +274,13 @@ export async function syncSAFT(
     // O WinMax4 abre sempre no MainPage com um iframe de autenticação UserAuthentication_content
     // Campos: txtUserLogin / txtUserPassword — botão: wucButtonConfirm_linkButton1
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-    await page.goto(url, { waitUntil: 'networkidle' })
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(2000)
 
     // Aguarda o iframe de autenticação
     await page.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 15000 }
+      { timeout: 60000 }
     )
 
     // Preenche no iframe de autenticação
@@ -294,14 +297,14 @@ export async function syncSAFT(
 
     // Clica Confirmar com Promise.all para evitar race condition
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
       page.evaluate(() => {
         const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
         ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
       })
     ])
     await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 15000 })
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 60000 })
     await log('✅ Login OK')
 
     const nomeFicheiro = await exportarSAFT(page, di, df)

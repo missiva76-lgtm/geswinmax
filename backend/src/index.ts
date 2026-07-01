@@ -27,6 +27,12 @@ const app = express()
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }))
 app.use(express.json({ limit: '10mb' }))
 
+// Verificar se browser está ocupado
+app.get('/api/browser-status', (_req, res) => {
+  const { isBrowserLocked } = require('./services/browserLock')
+  res.json({ ocupado: isBrowserLocked() })
+})
+
 // PDFs estáticos (emissão + arquivo)
 app.use('/api/pdfs', express.static(path.join(process.cwd(), 'pdfs'), {
   setHeaders: (res, filePath) => {
