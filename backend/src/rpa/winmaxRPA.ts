@@ -101,7 +101,7 @@ export class WinmaxRPA {
     // Usa chromium em vez de chromium-headless-shell (mais compatível com Render)
     this.browser = await chromium.launch({ 
       headless: true, 
-      slowMo: 80,
+      slowMo: 40,
       channel: undefined,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
     })
@@ -238,11 +238,47 @@ export class WinmaxRPA {
 
   private async abandonarDocumento(): Promise<void> {
     try {
-      await this.evalIn('DocumentIssue_content',
-        `document.getElementById('wucButtonExit_linkButton1')?.click()`)
-      await this.page!.waitForTimeout(1200)
-      await this.log('  🚫 Documento abandonado')
-    } catch { /**/ }
+      const di = 'DocumentIssue_content'
+
+      // 1. Apagar todas as linhas existentes (padrão DeleteCompound*)
+      let tentativas = 0
+      while (tentativas < 20) {
+        const temLinhas = await this.evalIn(di, `
+          (() => {
+            const btns = Array.from(document.querySelectorAll('[id^="DeleteCompound"]'))
+            if (btns.length === 0) return false
+            ;(btns[0] as HTMLElement).click()
+            return true
+          })()
+        `).catch(() => false)
+        
+        if (!temLinhas) break
+        
+        // Confirmar eliminação se aparecer confirmação
+        await this.page!.waitForTimeout(500)
+        await this.evalIn(di, `
+          document.getElementById('LbConfirmDeleteRow')?.click()
+        `).catch(() => {})
+        await this.page!.waitForTimeout(500)
+        tentativas++
+      }
+
+      // 2. Limpar campo de cliente
+      await this.evalIn(di, `
+        const el = document.getElementById('txtEntityCode') as HTMLInputElement
+        if (el) { el.value = ''; el.dispatchEvent(new Event('change', { bubbles: true })) }
+      `).catch(() => {})
+      await this.page!.waitForTimeout(300)
+
+      // 3. Sair do documento
+      await this.evalIn(di, `
+        document.getElementById('wucButtonExit_linkButton1')?.click()
+      `).catch(() => {})
+      await this.page!.waitForTimeout(1500)
+      await this.log('  🚫 Documento abandonado (linhas apagadas)')
+    } catch (e) {
+      await this.log(`  ⚠️ Erro ao abandonar: ${e}`)
+    }
   }
 
   private async abrirNovaFatura(): Promise<void> {
@@ -291,6 +327,32 @@ export class WinmaxRPA {
   private async preencherCabecalho(fatura: Fatura): Promise<void> {
     const di = 'DocumentIssue_content'
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
+
+    // Aguarda que o ddlDocumentType esteja enabled (não disabled) antes de tentar selecionar
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const s = f?.contentDocument?.getElementById('ddlDocumentType') as HTMLSelectElement
+        return s && !s.disabled
+      },
+      di,
+      { timeout: 30000, polling: 500 }
+    ).catch(async () => {
+      await this.log('  ⚠️ ddlDocumentType ainda disabled — a tentar fechar documento aberto...')
+      await this.abandonarDocumento()
+      await this.page!.waitForTimeout(2000)
+      await this.abrirNovaFatura()
+      // Segunda tentativa de aguardar enabled
+      await this.page!.waitForFunction(
+        (id: string) => {
+          const f = document.getElementById(id) as HTMLIFrameElement
+          const s = f?.contentDocument?.getElementById('ddlDocumentType') as HTMLSelectElement
+          return s && !s.disabled
+        },
+        di,
+        { timeout: 30000, polling: 500 }
+      )
+    })
 
     // Muda tipo de documento via frameLocator (mais fiável no Playwright headless)
     await this.page!.frameLocator('#DocumentIssue_content')

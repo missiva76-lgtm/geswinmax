@@ -19,7 +19,7 @@ function SyncButton() {
     setEstado('running')
     setMsg('A iniciar sync...')
     try {
-      const r = await fetch(`${API}/sync`, { method: 'POST' }).then(res => res.json())
+      const r = await fetch(`${API}/jobs/sync?force=true`, { method: 'POST' }).then(res => res.json())
       const jobId = r?.jobId
       if (!jobId) throw new Error('Sem jobId')
       setMsg('Sync em curso...')
