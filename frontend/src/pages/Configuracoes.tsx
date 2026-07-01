@@ -143,7 +143,7 @@ export default function Configuracoes() {
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-900 mb-6">Configurações</h2>
-      <p className="text-xs text-gray-300 mb-4">v20260620.1201</p>
+      <p className="text-xs text-gray-300 mb-4">v20260701.0001</p>
       <div className="space-y-6">
 
         {/* WinMax4 */}

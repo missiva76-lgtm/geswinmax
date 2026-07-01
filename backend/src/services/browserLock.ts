@@ -28,3 +28,9 @@ function release() {
 export function isBrowserLocked(): boolean {
   return locked
 }
+
+// Reset forçado do lock (usar quando browser ficou preso por crash)
+export function resetBrowserLock(): void {
+  locked = false
+  queue.length = 0
+}

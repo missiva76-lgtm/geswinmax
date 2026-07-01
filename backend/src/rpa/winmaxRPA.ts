@@ -281,7 +281,45 @@ export class WinmaxRPA {
     }
   }
 
+  private async fecharListagem(): Promise<void> {
+    // Fecha a listagem de documentos se estiver aberta — obrigatório antes de abrir novo documento
+    try {
+      const listagemAberta = await this.page!.evaluate(() => {
+        return !!document.getElementById('transactionDocumentsIssueCustomerStandard_content')
+      })
+      if (listagemAberta) {
+        // Procura botão de fechar da listagem (X ou Fechar)
+        await this.page!.evaluate(() => {
+          const iframes = ['transactionDocumentsIssueCustomerStandard_content', 'transactionDocuments_content']
+          for (const id of iframes) {
+            const f = document.getElementById(id) as HTMLIFrameElement
+            const doc = f?.contentDocument
+            if (!doc) continue
+            const btn = doc.getElementById('wucButtonClose_linkButton1') as HTMLElement
+              || doc.querySelector('[id*="Close"][id*="linkButton"]') as HTMLElement
+              || doc.querySelector('.cFormButtonClose') as HTMLElement
+            if (btn) { btn.click(); return }
+          }
+        })
+        await this.page!.waitForTimeout(1000)
+        await this.log('  📋 Listagem fechada')
+      }
+    } catch { /**/ }
+  }
+
   private async abrirNovaFatura(): Promise<void> {
+    // Verificar se há documento aberto — se sim, abandonar primeiro
+    const documentoAberto = await this.page!.evaluate(() => {
+      const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+      return !!(f?.contentDocument?.getElementById('ddlDocumentType'))
+    }).catch(() => false)
+
+    if (documentoAberto) {
+      await this.log('  ⚠️ Documento aberto detetado — a abandonar antes de continuar...')
+      await this.abandonarDocumento()
+      await this.page!.waitForTimeout(1500)
+    }
+
     // Garante que o Toolbox está carregado antes de clicar
     await this.page!.waitForFunction(
       () => {

@@ -154,5 +154,7 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
       concluido_em: admin.firestore.FieldValue.serverTimestamp(),
     })
     await log(`❌ Erro crítico: ${msg}`)
+    // Garantir que o browser é sempre fechado e o lock libertado
+    await rpa.fechar().catch(() => {})
   }
 }
