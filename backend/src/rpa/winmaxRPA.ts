@@ -94,6 +94,8 @@ export class WinmaxRPA {
     if (!fs.existsSync(this.config.pastaDestinoPDF)) {
       fs.mkdirSync(this.config.pastaDestinoPDF, { recursive: true })
     }
+    // Semáforo: só um browser de cada vez no Render
+    this.releaseLock = await acquireBrowserLock()
     // Usa chromium em vez de chromium-headless-shell (mais compatível com Render)
     this.browser = await chromium.launch({ 
       headless: true, 
@@ -111,7 +113,11 @@ export class WinmaxRPA {
     await this.log('✅ Browser iniciado (headless)')
   }
 
-  async fechar(): Promise<void> { await this.browser?.close() }
+  async fechar(): Promise<void> { 
+    await this.browser?.close()
+    this.releaseLock?.()
+    this.releaseLock = null
+  }
 
   async login(): Promise<void> {
     // WinMax4 abre no MainPage.aspx com iframe UserAuthentication_content

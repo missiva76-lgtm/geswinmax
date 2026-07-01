@@ -18,6 +18,7 @@
 //   Ficheiro gerado: SAF-T-PT_YYYYMMDD_YYYYMMDD.XML
 
 import { chromium, Browser, Page } from 'playwright'
+import { acquireBrowserLock } from '../services/browserLock'
 import * as admin from 'firebase-admin'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -257,6 +258,7 @@ export async function syncSAFT(
   let browser: Browser | null = null
 
   try {
+    releaseLock = await acquireBrowserLock()
     browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
     const context = await browser.newContext({
       locale: 'pt-PT',

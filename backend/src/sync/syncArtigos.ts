@@ -6,6 +6,7 @@
 //   __doPostBack('ddlSendTo', '') para activar o select de formato
 
 import { chromium, Browser, Page, Download } from 'playwright'
+import { acquireBrowserLock } from '../services/browserLock'
 import * as admin from 'firebase-admin'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -227,7 +228,9 @@ export async function syncWinmax(jobId?: string): Promise<void> {
   await log(`🔄 Sync WinMax4 (incremental): ${dataInicio} → ${dataFim}`)
 
   let browser: Browser | null = null
+  let releaseLock: (() => void) | null = null
   try {
+    releaseLock = await acquireBrowserLock()
     browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
     const context = await browser.newContext({
       locale: 'pt-PT', timezoneId: 'Europe/Lisbon', acceptDownloads: true,

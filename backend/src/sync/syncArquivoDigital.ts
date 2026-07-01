@@ -15,6 +15,7 @@
 // 8. Download PDF: clica lnkSelect de cada linha → download interceptado
 
 import { chromium, Browser, Page } from 'playwright'
+import { acquireBrowserLock } from '../services/browserLock'
 import * as admin from 'firebase-admin'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -178,6 +179,7 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
   let browser: Browser | null = null
 
   try {
+    releaseLock = await acquireBrowserLock()
     browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
     const context = await browser.newContext({
       locale: 'pt-PT',
