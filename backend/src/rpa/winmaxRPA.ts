@@ -7,6 +7,7 @@ import { Browser, BrowserContext, Page, chromium } from 'playwright'
 import { Fatura, ResultadoFatura, ErroLinha } from '../types'
 import { logger } from '../services/logger'
 import { appendJobLog } from '../services/firebase'
+import { acquireBrowserLock } from '../services/browserLock'
 
 interface RPAConfig {
   winmaxUrl: string
@@ -76,6 +77,7 @@ class ErroLinhaArtigo extends Error {
 
 export class WinmaxRPA {
   private browser: Browser | null = null
+  private releaseLock: (() => void) | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
   private config: RPAConfig

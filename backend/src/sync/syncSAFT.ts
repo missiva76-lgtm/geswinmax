@@ -256,6 +256,7 @@ export async function syncSAFT(
   fs.mkdirSync(pastaSAFT, { recursive: true })
 
   let browser: Browser | null = null
+  let releaseLock: (() => void) | null = null
 
   try {
     releaseLock = await acquireBrowserLock()

@@ -177,6 +177,7 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
   fs.mkdirSync(pastaPDFs, { recursive: true })
 
   let browser: Browser | null = null
+  let releaseLock: (() => void) | null = null
 
   try {
     releaseLock = await acquireBrowserLock()
