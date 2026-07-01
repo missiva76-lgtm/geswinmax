@@ -461,6 +461,17 @@ export class WinmaxRPA {
     if (erroArtigo) throw new ErroLinhaArtigo(n, linha.artigo_ref,
       `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
 
+    // Aguardar que txtUnitaryPrice esteja enabled (artigo carregado)
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const el = f?.contentDocument?.getElementById('txtUnitaryPrice') as HTMLInputElement
+        return el && !el.disabled
+      },
+      di,
+      { timeout: 15000, polling: 300 }
+    ).catch(() => {}) // se não ficar enabled continua na mesma
+
     // Preço via frameLocator (mais fiável)
     const precoStr = String(linha.preco_unitario).replace('.', ',')
     await this.page!.frameLocator('#DocumentIssue_content')
@@ -546,6 +557,19 @@ export class WinmaxRPA {
   private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = '', clienteCodigo = ''): Promise<string> {
     // O WinMax4 usa DocumentIssueClose_content para terminar+imprimir
     await this.log('  🖨️ A aguardar iframe de fecho do documento...')
+
+    // Tratar janela de confirmação intermédia se aparecer (LbConfirmOnCloseWindow)
+    await this.page!.waitForTimeout(800)
+    await this.page!.evaluate(() => {
+      const di = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+      const doc = di?.contentDocument
+      const confirmBtn = doc?.getElementById('LbConfirmOnCloseWindow') as HTMLElement
+        || doc?.getElementById('LbConfirmOnCloseValuesWindow') as HTMLElement
+        || doc?.getElementById('LbConfirmCloseCreditDocumentWithoutDetailRelation') as HTMLElement
+      if (confirmBtn && confirmBtn.offsetParent !== null) confirmBtn.click()
+    }).catch(() => {})
+    await this.page!.waitForTimeout(500)
+
     await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 15000)
     await this.page!.waitForTimeout(500)
 
@@ -630,9 +654,18 @@ export class WinmaxRPA {
     }
 
     // Clica "Terminar" — abre DocumentIssueClose_content com opções de impressão
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const btn = f?.contentDocument?.getElementById('wucButtonClose_linkButton1') as HTMLElement
+        return btn && btn.offsetParent !== null
+      },
+      'DocumentIssue_content',
+      { timeout: 30000, polling: 500 }
+    ).catch(() => {})
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#wucButtonClose_linkButton1')
-      .click()
+      .click({ timeout: 15000 })
     await this.page!.waitForTimeout(1500)
     await this.log('  ✅ A terminar documento...')
 
