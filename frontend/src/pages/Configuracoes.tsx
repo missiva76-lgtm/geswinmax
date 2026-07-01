@@ -10,8 +10,6 @@ interface TipoDoc {
   valor: string
 }
 
-const API = import.meta.env.VITE_API_URL || '/api'
-
 function SyncButton() {
   const [estado, setEstado] = useState<'idle'|'running'|'done'|'erro'>('idle')
   const [msg, setMsg] = useState('')
