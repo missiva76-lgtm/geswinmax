@@ -198,6 +198,7 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
   const company = config.company_code || 'AUTOAVENIDA'
 
   let dataInicio = (config.sync_data_inicio || '01-01-2000').replace(/-/g, '/')
+  const dataFim = (config.sync_data_fim || new Date().toLocaleDateString('pt-PT').replace(/\//g,'-')).replace(/-/g,'/')
 
   if (!opts?.forceCompleto) {
     // Sync incremental: usa a data da última sync bem-sucedida (menos 2 dias de margem)
@@ -226,8 +227,6 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
   } else {
     await log(`🔄 Sync WinMax4 (COMPLETO): ${dataInicio} → ${dataFim}`)
   }
-
-  const dataFim = (config.sync_data_fim || new Date().toLocaleDateString('pt-PT').replace(/\//g,'-')).replace(/-/g,'/')
 
   let browser: Browser | null = null
   let releaseLock: (() => void) | null = null
