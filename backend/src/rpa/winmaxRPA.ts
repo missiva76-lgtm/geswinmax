@@ -472,14 +472,24 @@ export class WinmaxRPA {
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#txtArticleCode')
       .press('Tab')
-    await this.page!.waitForTimeout(1000)
+    // Aguardar que o artigo carregue — pelo menos a descrição deve ficar preenchida
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const desc = f?.contentDocument?.getElementById('txtArticleDesignation') as HTMLInputElement
+        return desc && desc.value && desc.value.length > 0
+      },
+      di,
+      { timeout: 15000, polling: 300 }
+    ).catch(() => {})
+    await this.page!.waitForTimeout(500)
 
     const erroArtigo = await this.verificarErro(di)
     if (erroArtigo) throw new ErroLinhaArtigo(n, linha.artigo_ref,
       `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
 
     // Aguardar que txtUnitaryPrice esteja enabled (artigo carregado)
-    const precoEnabled = await this.page!.waitForFunction(
+    await this.page!.waitForFunction(
       (id: string) => {
         const f = document.getElementById(id) as HTMLIFrameElement
         const el = f?.contentDocument?.getElementById('txtUnitaryPrice') as HTMLInputElement
@@ -487,36 +497,23 @@ export class WinmaxRPA {
       },
       di,
       { timeout: 15000, polling: 300 }
-    ).then(() => true).catch(() => false)
+    ).catch(() => {})
 
-    // Só preenche o preço se o campo estiver enabled E o preço for diferente de zero
-    if (precoEnabled && linha.preco_unitario > 0) {
-      const precoStr = String(linha.preco_unitario).replace('.', ',')
-      await this.page!.frameLocator('#DocumentIssue_content')
-        .locator('#txtUnitaryPrice')
-        .fill(precoStr)
-      await this.page!.frameLocator('#DocumentIssue_content')
-        .locator('#txtUnitaryPrice')
-        .press('Tab')
-      await this.page!.waitForTimeout(300)
-    } else if (!precoEnabled && linha.preco_unitario > 0) {
-      // Campo ainda disabled mas temos preço — usar evaluate como fallback
-      await this.evalIn(di, `
-        const el = document.getElementById('txtUnitaryPrice') as HTMLInputElement
-        if (el) { el.value = '${String(linha.preco_unitario).replace('.', ',')}'; el.dispatchEvent(new Event('change', { bubbles: true })) }
-      `).catch(() => {})
-      await this.page!.waitForTimeout(300)
-    }
-
-    // Quantidade via frameLocator
-    const qtdStr = String(linha.quantidade).replace('.', ',')
-    await this.page!.frameLocator('#DocumentIssue_content')
-      .locator('#txtQuantity')
-      .fill(qtdStr)
-    await this.page!.frameLocator('#DocumentIssue_content')
-      .locator('#txtQuantity')
-      .press('Tab')
+    // Preencher preço sempre — se for 0 força zero (substitui o preço da ficha)
+    const precoStr = String(linha.preco_unitario).replace('.', ',')
+    await this.evalIn(di, `
+      const el = document.getElementById('txtUnitaryPrice') as HTMLInputElement
+      if (el) { el.value = '${precoStr}'; el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })) }
+    `).catch(() => {})
     await this.page!.waitForTimeout(300)
+
+    // Quantidade — preencher sempre via evaluate para garantir o valor correto
+    const qtdStr = String(linha.quantidade).replace('.', ',')
+    await this.evalIn(di, `
+      const el = document.getElementById('txtQuantity') as HTMLInputElement
+      if (el) { el.value = '${qtdStr}'; el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })) }
+    `).catch(() => {})
+    await this.page!.waitForTimeout(500)
 
     // Desconto (vem do Excel)
     if (linha.desconto_pct > 0) {
