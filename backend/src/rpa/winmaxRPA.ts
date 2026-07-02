@@ -7,6 +7,7 @@ import { Browser, BrowserContext, Page, chromium } from 'playwright'
 import { Fatura, ResultadoFatura, ErroLinha } from '../types'
 import { logger } from '../services/logger'
 import { appendJobLog } from '../services/firebase'
+import { acquireBrowserLock } from '../services/browserLock'
 
 interface RPAConfig {
   winmaxUrl: string
@@ -76,6 +77,7 @@ class ErroLinhaArtigo extends Error {
 
 export class WinmaxRPA {
   private browser: Browser | null = null
+  private releaseLock: (() => void) | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
   private config: RPAConfig
@@ -94,10 +96,12 @@ export class WinmaxRPA {
     if (!fs.existsSync(this.config.pastaDestinoPDF)) {
       fs.mkdirSync(this.config.pastaDestinoPDF, { recursive: true })
     }
+    // Semáforo: só um browser de cada vez no Render
+    this.releaseLock = await acquireBrowserLock()
     // Usa chromium em vez de chromium-headless-shell (mais compatível com Render)
     this.browser = await chromium.launch({ 
       headless: true, 
-      slowMo: 80,
+      slowMo: 40,
       channel: undefined,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
     })
@@ -111,19 +115,23 @@ export class WinmaxRPA {
     await this.log('✅ Browser iniciado (headless)')
   }
 
-  async fechar(): Promise<void> { await this.browser?.close() }
+  async fechar(): Promise<void> { 
+    await this.browser?.close()
+    this.releaseLock?.()
+    this.releaseLock = null
+  }
 
   async login(): Promise<void> {
     // WinMax4 abre no MainPage.aspx com iframe UserAuthentication_content
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${this.config.companyCode}`
     await this.log(`🔑 Login: ${url}`)
-    await this.page!.goto(url, { waitUntil: 'networkidle' })
+    await this.page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await this.page!.waitForTimeout(2000)
 
     // Aguarda iframe de autenticação
     await this.page!.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'),
-      { timeout: 30000 }
+      { timeout: 60000 }
     )
 
     // Preenche utilizador e password no iframe
@@ -140,7 +148,7 @@ export class WinmaxRPA {
 
     // Clica Confirmar — o WinMax4 faz uma navegação após login bem sucedido
     await Promise.all([
-      this.page!.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+      this.page!.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
       this.page!.evaluate(() => {
         const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
         ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
@@ -152,7 +160,7 @@ export class WinmaxRPA {
     try {
       await this.page!.waitForFunction(
         () => !!document.getElementById('Toolbox_content'),
-        { timeout: 15000 }
+        { timeout: 60000 }
       )
     } catch {
       await this.page!.screenshot({ path: 'logs/erro-login.png' })
@@ -202,7 +210,7 @@ export class WinmaxRPA {
     )
   }
 
-  private async waitFor(iframeId: string, selector: string, timeout = 30000): Promise<void> {
+  private async waitFor(iframeId: string, selector: string, timeout = 60000): Promise<void> {
     await this.page!.waitForFunction(
       ({ id, sel }) => {
         const f = document.getElementById(id) as HTMLIFrameElement
@@ -230,14 +238,88 @@ export class WinmaxRPA {
 
   private async abandonarDocumento(): Promise<void> {
     try {
-      await this.evalIn('DocumentIssue_content',
-        `document.getElementById('wucButtonExit_linkButton1')?.click()`)
-      await this.page!.waitForTimeout(1200)
-      await this.log('  🚫 Documento abandonado')
+      const di = 'DocumentIssue_content'
+
+      // 1. Apagar todas as linhas existentes (padrão DeleteCompound*)
+      let tentativas = 0
+      while (tentativas < 20) {
+        const temLinhas = await this.evalIn(di, `
+          (() => {
+            const btns = Array.from(document.querySelectorAll('[id^="DeleteCompound"]'))
+            if (btns.length === 0) return false
+            ;(btns[0] as HTMLElement).click()
+            return true
+          })()
+        `).catch(() => false)
+        
+        if (!temLinhas) break
+        
+        // Confirmar eliminação se aparecer confirmação
+        await this.page!.waitForTimeout(500)
+        await this.evalIn(di, `
+          document.getElementById('LbConfirmDeleteRow')?.click()
+        `).catch(() => {})
+        await this.page!.waitForTimeout(500)
+        tentativas++
+      }
+
+      // 2. Limpar campo de cliente
+      await this.evalIn(di, `
+        const el = document.getElementById('txtEntityCode') as HTMLInputElement
+        if (el) { el.value = ''; el.dispatchEvent(new Event('change', { bubbles: true })) }
+      `).catch(() => {})
+      await this.page!.waitForTimeout(300)
+
+      // 3. Sair do documento
+      await this.evalIn(di, `
+        document.getElementById('wucButtonExit_linkButton1')?.click()
+      `).catch(() => {})
+      await this.page!.waitForTimeout(1500)
+      await this.log('  🚫 Documento abandonado (linhas apagadas)')
+    } catch (e) {
+      await this.log(`  ⚠️ Erro ao abandonar: ${e}`)
+    }
+  }
+
+  private async fecharListagem(): Promise<void> {
+    // Fecha a listagem de documentos se estiver aberta — obrigatório antes de abrir novo documento
+    try {
+      const listagemAberta = await this.page!.evaluate(() => {
+        return !!document.getElementById('transactionDocumentsIssueCustomerStandard_content')
+      })
+      if (listagemAberta) {
+        // Procura botão de fechar da listagem (X ou Fechar)
+        await this.page!.evaluate(() => {
+          const iframes = ['transactionDocumentsIssueCustomerStandard_content', 'transactionDocuments_content']
+          for (const id of iframes) {
+            const f = document.getElementById(id) as HTMLIFrameElement
+            const doc = f?.contentDocument
+            if (!doc) continue
+            const btn = doc.getElementById('wucButtonClose_linkButton1') as HTMLElement
+              || doc.querySelector('[id*="Close"][id*="linkButton"]') as HTMLElement
+              || doc.querySelector('.cFormButtonClose') as HTMLElement
+            if (btn) { btn.click(); return }
+          }
+        })
+        await this.page!.waitForTimeout(1000)
+        await this.log('  📋 Listagem fechada')
+      }
     } catch { /**/ }
   }
 
   private async abrirNovaFatura(): Promise<void> {
+    // Verificar se há documento aberto — se sim, abandonar primeiro
+    const documentoAberto = await this.page!.evaluate(() => {
+      const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+      return !!(f?.contentDocument?.getElementById('ddlDocumentType'))
+    }).catch(() => false)
+
+    if (documentoAberto) {
+      await this.log('  ⚠️ Documento aberto detetado — a abandonar antes de continuar...')
+      await this.abandonarDocumento()
+      await this.page!.waitForTimeout(1500)
+    }
+
     // Garante que o Toolbox está carregado antes de clicar
     await this.page!.waitForFunction(
       () => {
@@ -246,7 +328,7 @@ export class WinmaxRPA {
         return !!(doc && doc.readyState === 'complete' &&
           doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
       },
-      { timeout: 15000, polling: 500 }
+      { timeout: 60000, polling: 500 }
     )
 
     // Verifica se o atalho existe e clica
@@ -263,7 +345,7 @@ export class WinmaxRPA {
     // Aguarda o iframe aparecer no DOM
     await this.page!.waitForFunction(
       () => !!document.getElementById('transactionDocumentsIssueCustomerStandard_content'),
-      { timeout: 15000, polling: 300 }
+      { timeout: 60000, polling: 300 }
     )
     await this.log('  📋 Iframe transactionDocuments presente')
 
@@ -276,13 +358,39 @@ export class WinmaxRPA {
       const li = document.getElementById('transactionDocumentsIssueCustomerStandard_content') as HTMLIFrameElement
       ;(li?.contentDocument?.getElementById('wucFileList1_wucButtonInsert_linkButton1') as HTMLElement)?.click()
     })
-    await this.waitFor('DocumentIssue_content', SEL.entityCode, 30000)
+    await this.waitFor('DocumentIssue_content', SEL.entityCode, 60000)
     await this.page!.waitForTimeout(800)
   }
 
   private async preencherCabecalho(fatura: Fatura): Promise<void> {
     const di = 'DocumentIssue_content'
     const tipoVal = TIPO_DOC[fatura.tipo_documento] ?? '37'
+
+    // Aguarda que o ddlDocumentType esteja enabled (não disabled) antes de tentar selecionar
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const s = f?.contentDocument?.getElementById('ddlDocumentType') as HTMLSelectElement
+        return s && !s.disabled
+      },
+      di,
+      { timeout: 30000, polling: 500 }
+    ).catch(async () => {
+      await this.log('  ⚠️ ddlDocumentType ainda disabled — a tentar fechar documento aberto...')
+      await this.abandonarDocumento()
+      await this.page!.waitForTimeout(2000)
+      await this.abrirNovaFatura()
+      // Segunda tentativa de aguardar enabled
+      await this.page!.waitForFunction(
+        (id: string) => {
+          const f = document.getElementById(id) as HTMLIFrameElement
+          const s = f?.contentDocument?.getElementById('ddlDocumentType') as HTMLSelectElement
+          return s && !s.disabled
+        },
+        di,
+        { timeout: 30000, polling: 500 }
+      )
+    })
 
     // Muda tipo de documento via frameLocator (mais fiável no Playwright headless)
     await this.page!.frameLocator('#DocumentIssue_content')
@@ -320,7 +428,7 @@ export class WinmaxRPA {
         return nome.length > 0
       },
       di,
-      { timeout: 15000, polling: 500 }
+      { timeout: 60000, polling: 500 }
     )
 
     const erroEnt = await this.verificarErro(di)
@@ -352,6 +460,17 @@ export class WinmaxRPA {
     const erroArtigo = await this.verificarErro(di)
     if (erroArtigo) throw new ErroLinhaArtigo(n, linha.artigo_ref,
       `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
+
+    // Aguardar que txtUnitaryPrice esteja enabled (artigo carregado)
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const el = f?.contentDocument?.getElementById('txtUnitaryPrice') as HTMLInputElement
+        return el && !el.disabled
+      },
+      di,
+      { timeout: 15000, polling: 300 }
+    ).catch(() => {}) // se não ficar enabled continua na mesma
 
     // Preço via frameLocator (mais fiável)
     const precoStr = String(linha.preco_unitario).replace('.', ',')
@@ -438,6 +557,19 @@ export class WinmaxRPA {
   private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = '', clienteCodigo = ''): Promise<string> {
     // O WinMax4 usa DocumentIssueClose_content para terminar+imprimir
     await this.log('  🖨️ A aguardar iframe de fecho do documento...')
+
+    // Tratar janela de confirmação intermédia se aparecer (LbConfirmOnCloseWindow)
+    await this.page!.waitForTimeout(800)
+    await this.page!.evaluate(() => {
+      const di = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+      const doc = di?.contentDocument
+      const confirmBtn = doc?.getElementById('LbConfirmOnCloseWindow') as HTMLElement
+        || doc?.getElementById('LbConfirmOnCloseValuesWindow') as HTMLElement
+        || doc?.getElementById('LbConfirmCloseCreditDocumentWithoutDetailRelation') as HTMLElement
+      if (confirmBtn && confirmBtn.offsetParent !== null) confirmBtn.click()
+    }).catch(() => {})
+    await this.page!.waitForTimeout(500)
+
     await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 15000)
     await this.page!.waitForTimeout(500)
 
@@ -522,9 +654,18 @@ export class WinmaxRPA {
     }
 
     // Clica "Terminar" — abre DocumentIssueClose_content com opções de impressão
+    await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const btn = f?.contentDocument?.getElementById('wucButtonClose_linkButton1') as HTMLElement
+        return btn && btn.offsetParent !== null
+      },
+      'DocumentIssue_content',
+      { timeout: 30000, polling: 500 }
+    ).catch(() => {})
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#wucButtonClose_linkButton1')
-      .click()
+      .click({ timeout: 15000 })
     await this.page!.waitForTimeout(1500)
     await this.log('  ✅ A terminar documento...')
 

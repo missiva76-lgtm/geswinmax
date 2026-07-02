@@ -71,6 +71,7 @@ function lerExcel(caminho: string): Fatura[] {
 
 export async function processarEmissaoJob(jobId: string, excelLocalPath: string): Promise<void> {
   const log = (msg: string) => appendJobLog(jobId, msg).catch(() => {})
+  let rpa: WinmaxRPA | null = null
 
   try {
     await updateJob(jobId, { estado: 'ativo', progresso: 0 })
@@ -85,7 +86,7 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
     const pastaPDFs = path.join(pastaBase, jobId)
     fs.mkdirSync(pastaPDFs, { recursive: true })
 
-    const rpa = new WinmaxRPA({
+    rpa = new WinmaxRPA({
       winmaxUrl:       config.winmax_url || 'https://app102.winmax4.com',
       companyCode:     config.company_code || 'AUTOAVENIDA',
       utilizador:      config.utilizador || '',
@@ -154,5 +155,7 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
       concluido_em: admin.firestore.FieldValue.serverTimestamp(),
     })
     await log(`❌ Erro crítico: ${msg}`)
+    // Garantir que o browser é sempre fechado e o lock libertado
+    await rpa?.fechar().catch(() => {})
   }
 }

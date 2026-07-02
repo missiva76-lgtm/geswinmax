@@ -17,7 +17,7 @@ router.get('/', async (req: Request, res: Response) => {
       q = q.where('tipo_documento', '==', req.query.tipo) as any
     }
 
-    const snap = await q.limit(2000).get()
+    const snap = await q.get()
     res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })))
   } catch (err) {
     res.status(500).json({ erro: String(err) })
@@ -28,7 +28,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/pesquisar', async (req: Request, res: Response) => {
   try {
     const q = String(req.query.q || '').toUpperCase().trim()
-    const snap = await db().collection('arquivo').orderBy('importado_em', 'desc').limit(2000).get()
+    const snap = await db().collection('arquivo').orderBy('importado_em', 'desc').get()
 
     const todos = snap.docs.map(d => ({ id: d.id, ...d.data() as any }))
     const filtrados = q
@@ -76,5 +76,63 @@ router.get('/pdf/:ficheiro', async (req: Request, res: Response) => {
     res.redirect(url)
   } catch (err) {
     res.status(500).json({ erro: String(err) })
+  }
+})
+
+// GET /api/arquivo/download/:ficheiro — download autenticado via Playwright
+router.get('/download/:ficheiro', async (req: Request, res: Response) => {
+  const { chromium } = await import('playwright')
+  const { getConfig } = await import('../services/firebase')
+  let browser: any = null
+  try {
+    const config  = await getConfig()
+    const baseUrl = config.winmax_url || 'https://app102.winmax4.com'
+    const company = config.company_code || 'AUTOAVENIDA'
+    const ficheiro = decodeURIComponent(req.params.ficheiro)
+
+    browser = await chromium.launch({ headless: true })
+    const context = await browser.newContext({ acceptDownloads: true })
+    const page    = await context.newPage()
+
+    // Login
+    await page.goto(`${baseUrl}/MainPage.aspx?CompanyCode=${company}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await page.waitForTimeout(2000)
+    await page.waitForFunction(() => !!document.getElementById('UserAuthentication_content'), { timeout: 60000 })
+    await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
+      const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      const doc = f?.contentDocument
+      const u = doc?.getElementById('txtUserLogin')   as HTMLInputElement
+      const p = doc?.getElementById('txtUserPassword') as HTMLInputElement
+      if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
+      if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
+    }, { user: config.utilizador || '', pass: config.password || '' })
+    await page.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+    })
+    await page.waitForTimeout(3000)
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 }).catch(() => {})
+
+    // Descarrega o PDF diretamente
+    const downloadPromise = page.waitForEvent('download', { timeout: 60000 })
+    await page.evaluate(({ url, file }: { url: string; file: string }) => {
+      const a = document.createElement('a')
+      a.href = `${url}/MTransactions/DigitalArchiveFileHandler.aspx?file=${encodeURIComponent(file)}`
+      a.click()
+    }, { url: baseUrl, file: ficheiro })
+
+    const download = await downloadPromise
+    const path     = await download.path()
+
+    if (!path) throw new Error('Download falhou')
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `inline; filename="${ficheiro}"`)
+    const fs = await import('fs')
+    res.sendFile(path, () => { fs.rmSync(path, { force: true }) })
+  } catch (err) {
+    res.status(500).json({ erro: String(err) })
+  } finally {
+    if (browser) await browser.close().catch(() => {})
   }
 })

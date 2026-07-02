@@ -16,6 +16,15 @@ const upload = multer({ dest: path.join(process.cwd(), 'tmp', 'uploads') })
 router.post('/emissao', upload.single('excel'), async (req: Request, res: Response) => {
   if (!req.file) return res.status(400).json({ erro: 'Ficheiro Excel em falta' })
 
+  // Cancela jobs de emissão ativos anteriores
+  const ativos = await db().collection('jobs')
+    .where('tipo', '==', 'emissao')
+    .where('estado', '==', 'ativo')
+    .get()
+  for (const doc of ativos.docs) {
+    await doc.ref.update({ estado: 'cancelado', atualizado_em: admin.firestore.FieldValue.serverTimestamp() })
+  }
+
   const jobId = uuidv4()
 
   // Cria job no Firestore
@@ -51,18 +60,19 @@ router.get('/', async (_req: Request, res: Response) => {
   res.json(snap.docs.map(d => d.data()))
 })
 
-// POST /api/jobs/sync — Força sync manual
-router.post('/sync', async (_req: Request, res: Response) => {
+// POST /api/jobs/sync — Força sync manual (?force=true para sync completo desde data_inicio)
+router.post('/sync', async (req: Request, res: Response) => {
+  const forceCompleto = req.query.force === 'true' || req.body?.force === true
   const jobId = uuidv4()
   await db().collection('jobs').doc(jobId).set({
     id: jobId, tipo: 'sync', estado: 'ativo',
     progresso: 0, log: [],
     criado_em: admin.firestore.FieldValue.serverTimestamp(),
   })
-  syncWinmax(jobId)
+  syncWinmax(jobId, { forceCompleto })
     .then(() => updateJob(jobId, { estado: 'concluido', progresso: 100 }))
     .catch(async (e) => updateJob(jobId, { estado: 'erro', erro_geral: String(e) }))
-  res.json({ jobId, mensagem: 'Sync iniciada' })
+  res.json({ jobId, mensagem: forceCompleto ? 'Sync COMPLETO iniciada' : 'Sync iniciada' })
 })
 
 export default router

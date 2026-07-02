@@ -27,6 +27,16 @@ const app = express()
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }))
 app.use(express.json({ limit: '10mb' }))
 
+// Verificar e resetar estado do browser
+import { isBrowserLocked, resetBrowserLock } from './services/browserLock'
+app.get('/api/browser-status', (_req, res) => {
+  res.json({ ocupado: isBrowserLocked() })
+})
+app.post('/api/browser-reset', (_req, res) => {
+  resetBrowserLock()
+  res.json({ ok: true, mensagem: 'Browser lock resetado' })
+})
+
 // PDFs estáticos (emissão + arquivo)
 app.use('/api/pdfs', express.static(path.join(process.cwd(), 'pdfs'), {
   setHeaders: (res, filePath) => {

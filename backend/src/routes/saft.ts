@@ -8,7 +8,7 @@ const router = Router()
 // GET /api/saft — lista resumos SAF-T importados
 router.get('/', async (_req: Request, res: Response) => {
   try {
-    const snap = await db().collection('saft').orderBy('periodo_inicio', 'desc').limit(24).get()
+    const snap = await db().collection('saft').orderBy('importado_em', 'desc').limit(24).get()
     res.json(snap.docs.map(d => ({ id: d.id, ...d.data() })))
   } catch (err) { res.status(500).json({ erro: String(err) }) }
 })
