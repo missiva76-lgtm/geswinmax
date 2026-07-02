@@ -661,7 +661,7 @@ export class WinmaxRPA {
     }
   }
 
-  private async terminarDocumento(fatura: Fatura): Promise<{ numDoc: string; localPDF: string }> {
+  private async terminarDocumento(fatura: Fatura): Promise<{ numDoc: string; localPDF: string; dataDocumento: string }> {
     const di = 'DocumentIssue_content'
     const numPrevisto = await this.evalIn(di,
       `document.getElementById('lblNextDocumentNumber')?.innerText?.replace(/[()]/g,'').trim() || 'doc'`
