@@ -17,6 +17,7 @@ export function initFirebase() {
       }
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
+        storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'geswinmax.firebasestorage.app',
       })
       firestoreInstance = admin.firestore()
       if (process.env.FIRESTORE_USE_REST === 'true') {
@@ -47,6 +48,7 @@ export function initFirebase() {
 
   admin.initializeApp({
     credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'geswinmax.firebasestorage.app',
   })
   firestoreInstance = admin.firestore()
   if (process.env.FIRESTORE_USE_REST === 'true') {
@@ -73,6 +75,15 @@ export async function appendJobLog(jobId: string, msg: string) {
     log: admin.firestore.FieldValue.arrayUnion(`[${new Date().toISOString()}] ${msg}`),
     atualizado_em: admin.firestore.FieldValue.serverTimestamp(),
   })
+}
+
+export async function uploadPDFToStorage(buffer: Buffer, nomeFicheiro: string, jobId: string): Promise<string> {
+  const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || 'geswinmax.firebasestorage.app')
+  const destPath = `pdfs/${jobId}/${nomeFicheiro}`
+  const file = bucket.file(destPath)
+  await file.save(buffer, { contentType: 'application/pdf', metadata: { cacheControl: 'public, max-age=31536000' } })
+  await file.makePublic()
+  return `https://storage.googleapis.com/${bucket.name}/${destPath}`
 }
 
 export async function getConfig(): Promise<Record<string, string>> {

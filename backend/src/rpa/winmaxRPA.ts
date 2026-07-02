@@ -559,6 +559,7 @@ export class WinmaxRPA {
 
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('input[id^="DetailPropertyRemarks"]')
+      .last()
       .click({ timeout: 10000 })
     await this.page!.waitForTimeout(1500)
     await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
@@ -650,8 +651,19 @@ export class WinmaxRPA {
       const destino = path.join(this.config.pastaDestinoPDF || '/tmp/pdfs', `${nomeSeguro}.pdf`)
       fs.mkdirSync(path.dirname(destino), { recursive: true })
       fs.writeFileSync(destino, buffer)
-      await this.log(`  🖨️  PDF guardado: ${nomeSeguro}.pdf`)
-      return destino
+
+      // Upload para Firebase Storage (persistente — sobrevive a reboots do Render)
+      try {
+        const { uploadPDFToStorage } = await import('../services/firebase')
+        const jobId = path.basename(this.config.pastaDestinoPDF || 'job')
+        const urlStorage = await uploadPDFToStorage(buffer, `${nomeSeguro}.pdf`, jobId)
+        await this.log(`  🖨️  PDF guardado: ${nomeSeguro}.pdf`)
+        return urlStorage
+      } catch (storageErr: any) {
+        await this.log(`  ⚠️  Storage: ${storageErr.message} — usando path local`)
+        await this.log(`  🖨️  PDF guardado: ${nomeSeguro}.pdf`)
+        return destino
+      }
     } catch (e: any) {
       await this.log(`  ⚠️  PDF: erro ao guardar — ${e.message}`)
       return ''
