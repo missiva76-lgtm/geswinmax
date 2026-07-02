@@ -274,7 +274,12 @@ export class WinmaxRPA {
       await this.evalIn(di, `
         document.getElementById('wucButtonExit_linkButton1')?.click()
       `).catch(() => {})
-      await this.page!.waitForTimeout(1500)
+      await this.page!.waitForTimeout(2000)
+
+      // 4. Fechar a listagem que abre após sair
+      await this.fecharListagem()
+      await this.page!.waitForTimeout(1000)
+
       await this.log('  🚫 Documento abandonado (linhas apagadas)')
     } catch (e) {
       await this.log(`  ⚠️ Erro ao abandonar: ${e}`)
@@ -282,27 +287,39 @@ export class WinmaxRPA {
   }
 
   private async fecharListagem(): Promise<void> {
-    // Fecha a listagem de documentos se estiver aberta — obrigatório antes de abrir novo documento
     try {
-      const listagemAberta = await this.page!.evaluate(() => {
-        return !!document.getElementById('transactionDocumentsIssueCustomerStandard_content')
-      })
-      if (listagemAberta) {
-        // Procura botão de fechar da listagem (X ou Fechar)
-        await this.page!.evaluate(() => {
-          const iframes = ['transactionDocumentsIssueCustomerStandard_content', 'transactionDocuments_content']
-          for (const id of iframes) {
-            const f = document.getElementById(id) as HTMLIFrameElement
-            const doc = f?.contentDocument
-            if (!doc) continue
-            const btn = doc.getElementById('wucButtonClose_linkButton1') as HTMLElement
-              || doc.querySelector('[id*="Close"][id*="linkButton"]') as HTMLElement
-              || doc.querySelector('.cFormButtonClose') as HTMLElement
-            if (btn) { btn.click(); return }
+      // Tenta fechar qualquer iframe de listagem/documento aberto
+      const fechou = await this.page!.evaluate(() => {
+        // Botões de fechar conhecidos no contexto principal
+        const btnIds = [
+          'wucButtonClose_linkButton1',
+          'wucButtonExit_linkButton1', 
+          'wucButtonCancel_linkButton1',
+        ]
+        // Procura em iframes de listagem
+        const iframeIds = [
+          'transactionDocumentsIssueCustomerStandard_content',
+          'transactionDocuments_content',
+          'DocumentIssue_content',
+        ]
+        for (const iframeId of iframeIds) {
+          const f = document.getElementById(iframeId) as HTMLIFrameElement
+          const doc = f?.contentDocument
+          if (!doc) continue
+          for (const btnId of btnIds) {
+            const btn = doc.getElementById(btnId) as HTMLElement
+            if (btn && btn.offsetParent !== null) {
+              btn.click()
+              return true
+            }
           }
-        })
-        await this.page!.waitForTimeout(1000)
-        await this.log('  📋 Listagem fechada')
+        }
+        return false
+      }).catch(() => false)
+
+      if (fechou) {
+        await this.page!.waitForTimeout(1500)
+        await this.log('  📋 Listagem/documento fechado')
       }
     } catch { /**/ }
   }
@@ -462,7 +479,7 @@ export class WinmaxRPA {
       `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
 
     // Aguardar que txtUnitaryPrice esteja enabled (artigo carregado)
-    await this.page!.waitForFunction(
+    const precoEnabled = await this.page!.waitForFunction(
       (id: string) => {
         const f = document.getElementById(id) as HTMLIFrameElement
         const el = f?.contentDocument?.getElementById('txtUnitaryPrice') as HTMLInputElement
@@ -470,17 +487,26 @@ export class WinmaxRPA {
       },
       di,
       { timeout: 15000, polling: 300 }
-    ).catch(() => {}) // se não ficar enabled continua na mesma
+    ).then(() => true).catch(() => false)
 
-    // Preço via frameLocator (mais fiável)
-    const precoStr = String(linha.preco_unitario).replace('.', ',')
-    await this.page!.frameLocator('#DocumentIssue_content')
-      .locator('#txtUnitaryPrice')
-      .fill(precoStr)
-    await this.page!.frameLocator('#DocumentIssue_content')
-      .locator('#txtUnitaryPrice')
-      .press('Tab')
-    await this.page!.waitForTimeout(300)
+    // Só preenche o preço se o campo estiver enabled E o preço for diferente de zero
+    if (precoEnabled && linha.preco_unitario > 0) {
+      const precoStr = String(linha.preco_unitario).replace('.', ',')
+      await this.page!.frameLocator('#DocumentIssue_content')
+        .locator('#txtUnitaryPrice')
+        .fill(precoStr)
+      await this.page!.frameLocator('#DocumentIssue_content')
+        .locator('#txtUnitaryPrice')
+        .press('Tab')
+      await this.page!.waitForTimeout(300)
+    } else if (!precoEnabled && linha.preco_unitario > 0) {
+      // Campo ainda disabled mas temos preço — usar evaluate como fallback
+      await this.evalIn(di, `
+        const el = document.getElementById('txtUnitaryPrice') as HTMLInputElement
+        if (el) { el.value = '${String(linha.preco_unitario).replace('.', ',')}'; el.dispatchEvent(new Event('change', { bubbles: true })) }
+      `).catch(() => {})
+      await this.page!.waitForTimeout(300)
+    }
 
     // Quantidade via frameLocator
     const qtdStr = String(linha.quantidade).replace('.', ',')
@@ -692,7 +718,11 @@ export class WinmaxRPA {
       try { fs.renameSync(localPDF, novo) } catch { /**/ }
     }
 
-    return { numDoc: numDoc || 'EMITIDO', localPDF }
+    const dataDocumento = await this.evalIn(di,
+      `document.getElementById('txtDocumentDate')?.value || ''`
+    ).catch(() => '') as string
+
+    return { numDoc: numDoc || 'EMITIDO', localPDF, dataDocumento }
   }
 
   async criarFatura(fatura: Fatura): Promise<ResultadoFatura> {
@@ -725,11 +755,12 @@ export class WinmaxRPA {
       }
     }
 
-    const { numDoc, localPDF } = await this.terminarDocumento(fatura)
+    const { numDoc, localPDF, dataDocumento } = await this.terminarDocumento(fatura)
     return {
       index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
       tipo_documento: fatura.tipo_documento, sucesso: true,
       numero_documento: numDoc,
+      data_documento: dataDocumento || null,
       pdf_url: localPDF,
       total: fatura.linhas.reduce((s, l) => s + (l.preco_unitario * l.quantidade * (1 - (l.desconto_pct || 0) / 100)), 0),
       total_linhas: fatura.linhas.length, linhas_ok: fatura.linhas.length,

@@ -28,6 +28,7 @@ export interface ResultadoFatura {
   tipo_documento: string
   sucesso: boolean
   numero_documento?: string
+  data_documento?: string
   pdf_url?: string
   total?: number
   total_linhas: number

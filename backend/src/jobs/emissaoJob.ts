@@ -117,6 +117,7 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
         cliente_nome:     resultado.cliente_nome,
         tipo_documento:   resultado.tipo_documento,
         numero_documento: resultado.numero_documento || null,
+        data_documento:   resultado.data_documento || null,
         pdf_url:          pdfUrl,
         sucesso:          resultado.sucesso,
         total_linhas:     resultado.total_linhas,
@@ -126,6 +127,7 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
         duracao_ms:       resultado.duracao_ms || 0,
         total:            resultado.total || null,
         emitido_em:       admin.firestore.FieldValue.serverTimestamp(),
+        data_submissao:   admin.firestore.FieldValue.serverTimestamp(),
       })
     })
 
