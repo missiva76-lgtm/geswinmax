@@ -582,6 +582,64 @@ export class WinmaxRPA {
 
     // IVA e descrição vêm da ficha do artigo no WinMax4 — não se preenchem
 
+    // CORRIGIDO 03/07/2026: em produção, o campo Quantidade por vezes reverte para o
+    // valor por omissão (1) mesmo depois de o preenchermos corretamente (confirmado no
+    // log: "📦 Linha 3: KM x55 @ 0.4€" mas a fatura emitida mostrou Quantidade=1,00).
+    // O log antigo só mostrava o valor PRETENDIDO (do Excel), não o que ficou de facto
+    // no campo — não provava sucesso. A causa mais provável é o WinMax4 (ASP.NET
+    // WebForms) disparar um postback assíncrono ao alterar o Preço unitário (recalcular
+    // totais da linha), que só termina DEPOIS de já termos escrito a Quantidade,
+    // repondo-a ao valor por omissão quando a resposta do servidor atualiza a linha.
+    // No teste manual via MCP isto não aparecia porque cada passo tinha tempo de sobra
+    // entre ações; no RPA automático os intervalos são fixos e mais curtos.
+    // Correção: em vez de tentar adivinhar o tempo exato do postback, verificamos e
+    // reaplicamos os valores mesmo antes de clicar em "Inserir" — corrige qualquer
+    // desvio de última hora, independentemente da causa exata.
+    const paraComparar = (v: string) => Number(String(v).replace(',', '.'))
+    const lerCampo = async (id: string): Promise<string> =>
+      (await this.evalIn(di, `document.getElementById('${id}')?.value || ''`).catch(() => '')) as string
+
+    for (let tentativa = 1; tentativa <= 2; tentativa++) {
+      const precoAtual = await lerCampo('txtUnitaryPrice')
+      const qtdAtual = await lerCampo('txtQuantity')
+      const precoOk = paraComparar(precoAtual) === paraComparar(precoStr)
+      const qtdOk = paraComparar(qtdAtual) === paraComparar(qtdStr)
+
+      if (precoOk && qtdOk) break
+
+      await this.log(`  ⚠️ Divergência antes de inserir (tentativa ${tentativa}): preço campo="${precoAtual}" esperado="${precoStr}" | qtd campo="${qtdAtual}" esperado="${qtdStr}" — a reaplicar`)
+
+      if (!precoOk) {
+        await this.evalIn(di, `
+          (function() {
+            var el = document.getElementById('txtUnitaryPrice');
+            if (el) {
+              el.value = '${precoStr}';
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              el.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+            return true;
+          })()
+        `).catch((e) => this.log(`  ⚠️ Falha ao reaplicar preço: ${e}`))
+      }
+      if (!qtdOk) {
+        await this.evalIn(di, `
+          (function() {
+            var el = document.getElementById('txtQuantity');
+            if (el) {
+              el.value = '${qtdStr}';
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              el.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+            return true;
+          })()
+        `).catch((e) => this.log(`  ⚠️ Falha ao reaplicar quantidade: ${e}`))
+      }
+      // Espera generosa para deixar qualquer postback assíncrono do WinMax4 estabilizar
+      // antes de verificar de novo ou avançar para o clique em "Inserir".
+      await this.page!.waitForTimeout(1000)
+    }
+
     // Clica botão "Inserir" via frameLocator (mais fiável que window.InsertDocumentDetail)
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#wucButtonInsertDocumentDetail_linkButton1')
