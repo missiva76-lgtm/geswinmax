@@ -244,12 +244,25 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
 
     const now = admin.firestore.FieldValue.serverTimestamp()
 
-    // Função para commit em batches (tamanho reduzido + pausa entre batches para não sobrecarregar Firestore)
+    // CORRIGIDO 03/07/2026: os batches eram gravados UM DE CADA VEZ (sequencialmente),
+    // com uma pausa fixa de 500ms extra entre cada um — mesmo o Firestore aguentando
+    // facilmente vários batches em paralelo. Para coleções grandes (milhares de artigos/
+    // movimentos), isto tornava a sincronização desnecessariamente lenta. Agora processa-se
+    // com um limite de concorrência controlado (CONCORRENCIA batches em simultâneo), e o
+    // tamanho de cada batch sobe de 250 para 450 (o limite real do Firestore é 500
+    // operações por batch — fica-se com margem de segurança).
     const commitBatches = async (ops: Array<{ col: string; id: string; data: Record<string, unknown> }>) => {
       if (ops.length === 0) { await log('  ⚠️ Sem operações para guardar'); return }
-      const SIZE = 250
-      for (let i = 0; i < ops.length; i += SIZE) {
-        const chunk = ops.slice(i, i + SIZE)
+      const SIZE = 450
+      const CONCORRENCIA = 4
+
+      const chunks: Array<typeof ops> = []
+      for (let i = 0; i < ops.length; i += SIZE) chunks.push(ops.slice(i, i + SIZE))
+
+      const totalChunks = chunks.length
+      let concluidos = 0
+
+      const executarChunk = async (chunk: typeof ops, indice: number) => {
         try {
           const batch = db().batch()
           for (const op of chunk) {
@@ -259,13 +272,24 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
             batch.commit(),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 45s no batch')), 45000))
           ])
-          await log(`  ✅ Batch ${Math.floor(i/SIZE)+1}/${Math.ceil(ops.length/SIZE)} guardado (${chunk.length} docs)`)
+          concluidos++
+          await log(`  ✅ Batch ${indice + 1}/${totalChunks} guardado (${chunk.length} docs)`)
         } catch (e) {
-          await log(`  ⚠️ Batch ${Math.floor(i/SIZE)+1} falhou (a continuar): ${e}`)
+          concluidos++
+          await log(`  ⚠️ Batch ${indice + 1}/${totalChunks} falhou (a continuar): ${e}`)
         }
-        // Pequena pausa entre batches para aliviar pressão sobre o Firestore
-        await new Promise(r => setTimeout(r, 500))
       }
+
+      // Pool de concorrência simples: mantém até CONCORRENCIA promessas em voo,
+      // arrancando a próxima assim que uma termina.
+      let proximoIndice = 0
+      const worker = async () => {
+        while (proximoIndice < chunks.length) {
+          const indice = proximoIndice++
+          await executarChunk(chunks[indice], indice)
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCORRENCIA, chunks.length) }, () => worker()))
     }
 
     // ─── Artigos Existências ───────────────────────────────────────────────
@@ -310,9 +334,13 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     await log('📈 Vendas por Artigo (CSV)...')
     // Limpa coleção antes de reimportar (evita registos órfãos de syncs antigas com mapeamento diferente)
     await log('  🗑️ A limpar movimentos_venda antigos...')
+    // CORRIGIDO 03/07/2026: o limite de 10 rondas × 400 registos = teto rígido de 4000.
+    // Coleções maiores ficavam com registos órfãos por limpar, silenciosamente (sem erro,
+    // sem aviso). Agora repete até a coleção ficar vazia, com uma margem de segurança
+    // (200 rondas = 98000 registos) só para evitar um loop infinito em caso de bug.
     let totalRemovidosVenda = 0
-    for (let tentativa = 0; tentativa < 10; tentativa++) {
-      const snap = await db().collection('movimentos_venda').limit(400).get().catch(() => null)
+    for (let tentativa = 0; tentativa < 200; tentativa++) {
+      const snap = await db().collection('movimentos_venda').limit(490).get().catch(() => null)
       if (!snap || snap.empty) break
       const delBatch = db().batch()
       snap.docs.forEach(d => delBatch.delete(d.ref))
@@ -363,9 +391,11 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     // ─── Compras por Artigo ───────────────────────────────────────────────
     await log('📉 Compras por Artigo (CSV)...')
     // Limpa coleção antes de reimportar
+    // CORRIGIDO 03/07/2026: mesmo problema do teto rígido de 4000 registos que existia
+    // em movimentos_venda — ver comentário acima para detalhe.
     let totalRemovidosCompra = 0
-    for (let tentativa = 0; tentativa < 10; tentativa++) {
-      const snap = await db().collection('movimentos_compra').limit(400).get().catch(() => null)
+    for (let tentativa = 0; tentativa < 200; tentativa++) {
+      const snap = await db().collection('movimentos_compra').limit(490).get().catch(() => null)
       if (!snap || snap.empty) break
       const delBatch = db().batch()
       snap.docs.forEach(d => delBatch.delete(d.ref))

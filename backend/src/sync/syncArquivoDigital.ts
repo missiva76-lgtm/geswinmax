@@ -251,6 +251,35 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     let totalImportados = 0
     let pagina = 1
 
+    // CORRIGIDO 03/07/2026: cada documento novo era gravado INDIVIDUALMENTE no Firestore,
+    // um `.set()` por documento, sequencialmente. Para o Arquivo Digital, que tipicamente
+    // acumula centenas ou milhares de documentos históricos, isto significava uma viagem
+    // de rede completa por documento — de longe o maior responsável pela lentidão da
+    // sincronização. Agora acumula-se num batch e só se grava de facto quando o batch
+    // atinge um tamanho razoável (450, com margem do limite real do Firestore de 500),
+    // ou no final da sincronização — reduzindo centenas/milhares de escritas a um punhado
+    // de batches.
+    const TAMANHO_BATCH = 450
+    let batchAtual = db().batch()
+    let contadorBatch = 0
+
+    const adicionarAoBatch = (docId: string, data: Record<string, unknown>) => {
+      batchAtual.set(db().collection('arquivo').doc(docId), data, { merge: true })
+      contadorBatch++
+    }
+
+    const flushBatch = async () => {
+      if (contadorBatch === 0) return
+      try {
+        await batchAtual.commit()
+        await log(`  💾 Batch gravado (${contadorBatch} docs)`)
+      } catch (e) {
+        await log(`  ⚠️ Falha ao gravar batch (${contadorBatch} docs): ${e}`)
+      }
+      batchAtual = db().batch()
+      contadorBatch = 0
+    }
+
     while (true) {
       const linhas = await extrairLinhas(page)
       const novas  = linhas.filter(l => l.ficheiro && !existentes.has(l.ficheiro))
@@ -275,22 +304,27 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
           }
         } catch { /**/ }
 
-        await db().collection('arquivo').doc(docId).set({
+        adicionarAoBatch(docId, {
           ...linha,
           pdf_url:      null,
           data_ts:      dataTs,
           importado_em: admin.firestore.FieldValue.serverTimestamp(),
           fonte:        'arquivo_digital_winmax',
-        }, { merge: true })
+        })
 
         existentes.add(linha.ficheiro)
         totalImportados++
+
+        if (contadorBatch >= TAMANHO_BATCH) await flushBatch()
       }
 
       const temProxima = await irProximaPagina(page)
       if (!temProxima || pagina >= total) break
       pagina++
     }
+
+    // Grava o que sobrar no último batch (pode não ter atingido TAMANHO_BATCH)
+    await flushBatch()
 
     await db().collection('sync_log').add({
       tipo:             'arquivo_digital',

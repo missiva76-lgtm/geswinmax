@@ -171,6 +171,20 @@ export class WinmaxRPA {
     await this.log('✅ Login OK')
   }
 
+  private async iframeExiste(iframeId: string): Promise<boolean> {
+    // CORRIGIDO 03/07/2026: em lotes grandes (ex: 33 faturas), observado em produção
+    // que o iframe DocumentIssue_content pode desaparecer por completo a meio de uma
+    // linha (provável timeout de sessão, popup inesperado do WinMax4, ou recarga da
+    // página). Sem esta verificação, o código perdia tempo em tentativas de reaplicar
+    // valores que nunca poderiam funcionar, e o clique final em "Inserir" ficava
+    // pendurado até ao timeout por omissão do Playwright (~30s) antes de desistir.
+    // Esta verificação é rápida (não lança exceção) e permite desistir de imediato.
+    return this.page!.evaluate((id: string) => {
+      const f = document.getElementById(id) as HTMLIFrameElement
+      return !!(f?.contentWindow && f?.contentDocument)
+    }, iframeId).catch(() => false)
+  }
+
   private async evalIn(iframeId: string, code: string): Promise<unknown> {
     // Usa script injetado no DOM do iframe para evitar restrições de strict mode
     // (window.eval em strict mode bloqueia 'arguments' usado pelo ASP.NET WebForms)
@@ -473,6 +487,14 @@ export class WinmaxRPA {
     const di = 'DocumentIssue_content'
     const n = idx + 1
 
+    // Verificação rápida antes de sequer tentar abrir a linha — evita ficar pendurado
+    // no timeout por omissão do Playwright (~30s) se o documento já tiver desaparecido
+    // (ver nota detalhada em iframeExiste()).
+    if (!(await this.iframeExiste(di))) {
+      throw new ErroLinhaArtigo(n, linha.artigo_ref,
+        `Linha ${n} — "${linha.artigo_ref}": iframe do documento desapareceu antes de iniciar a linha (possível timeout de sessão ou popup inesperado do WinMax4)`)
+    }
+
     // Clica "Inserir" para abrir o formulário de nova linha
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#wucButtonInsertDocumentDetail_linkButton1')
@@ -600,6 +622,15 @@ export class WinmaxRPA {
       (await this.evalIn(di, `document.getElementById('${id}')?.value || ''`).catch(() => '')) as string
 
     for (let tentativa = 1; tentativa <= 2; tentativa++) {
+      // Verificação rápida: se o iframe do documento desapareceu por completo (timeout de
+      // sessão, popup inesperado, recarga da página), não vale a pena continuar a tentar
+      // reaplicar valores — isso nunca vai funcionar. Desiste já com uma mensagem clara,
+      // em vez de perder ~30s no timeout por omissão do clique em "Inserir" mais à frente.
+      if (!(await this.iframeExiste(di))) {
+        throw new ErroLinhaArtigo(n, linha.artigo_ref,
+          `Linha ${n} — "${linha.artigo_ref}": iframe do documento desapareceu (possível timeout de sessão ou popup inesperado do WinMax4)`)
+      }
+
       const precoAtual = await lerCampo('txtUnitaryPrice')
       const qtdAtual = await lerCampo('txtQuantity')
       const precoOk = paraComparar(precoAtual) === paraComparar(precoStr)
@@ -638,6 +669,14 @@ export class WinmaxRPA {
       // Espera generosa para deixar qualquer postback assíncrono do WinMax4 estabilizar
       // antes de verificar de novo ou avançar para o clique em "Inserir".
       await this.page!.waitForTimeout(1000)
+    }
+
+    // Última verificação antes do clique final — elimina por completo o risco de ficar
+    // pendurado no timeout por omissão do Playwright (~30s) se o iframe tiver
+    // desaparecido entre o fim do loop acima e este ponto.
+    if (!(await this.iframeExiste(di))) {
+      throw new ErroLinhaArtigo(n, linha.artigo_ref,
+        `Linha ${n} — "${linha.artigo_ref}": iframe do documento desapareceu antes do clique final em Inserir`)
     }
 
     // Clica botão "Inserir" via frameLocator (mais fiável que window.InsertDocumentDetail)
