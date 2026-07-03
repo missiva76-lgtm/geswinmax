@@ -59,19 +59,42 @@ export default function Emissao() {
   const emitidas = faturas.filter(f => f.sucesso)
   const comErro  = faturas.filter(f => !f.sucesso)
 
-  // Download automático dos PDFs quando job conclui com sucesso
+  // Download de PDF via blob local — necessário porque pdf_url aponta para o Firebase
+  // Storage (origem diferente do site). O atributo `download` do <a>/HTML só é respeitado
+  // pelo browser para URLs da MESMA origem — para origens cruzadas, o browser ignora o
+  // `download` e simplesmente abre o PDF na página, em vez de o guardar em C:\PDF.
+  // CORRIGIDO 03/07/2026.
   const pdfsBaixados = useRef<Set<string>>(new Set())
+  const baixarPDF = useCallback((pdfUrl: string, nomeFicheiro: string) => {
+    fetch(pdfUrl)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.blob()
+      })
+      .then(blob => {
+        const blobUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = nomeFicheiro
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(blobUrl)
+      })
+      .catch(err => {
+        console.error(`[GesWinmax] Falha ao descarregar PDF ${nomeFicheiro}:`, err)
+        pdfsBaixados.current.delete(pdfUrl)
+      })
+  }, [])
+
+  // Download automático dos PDFs quando job conclui com sucesso
   useEffect(() => {
     if (job?.estado === 'concluido') {
       emitidas.forEach(f => {
         if (f.pdf_url && !pdfsBaixados.current.has(f.pdf_url)) {
           pdfsBaixados.current.add(f.pdf_url)
-          const a = document.createElement('a')
-          a.href = f.pdf_url
-          a.download = `${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`
-          document.body.appendChild(a)
-          a.click()
-          document.body.removeChild(a)
+          const nomeFicheiro = `${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`
+          baixarPDF(f.pdf_url, nomeFicheiro)
         }
       })
     }
@@ -240,12 +263,12 @@ export default function Emissao() {
                       <span className="text-gray-300 ml-1 text-xs">({f.fatura_id})</span>
                     </div>
                     {f.pdf_url && (
-                      <a href={f.pdf_url}
-                        download={`${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`}
+                      <button
+                        onClick={() => baixarPDF(f.pdf_url!, `${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`)}
                         className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs shrink-0"
                         title="Descarregar PDF">
                         PDF <ExternalLink size={11}/>
-                      </a>
+                      </button>
                     )}
                   </div>
                 ))}
