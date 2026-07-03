@@ -1,5 +1,7 @@
 // rpa/winmaxRPA.ts — Motor RPA WinMax4 AUTOAVENIDA
 // Seletores descobertos ao vivo em 16/06/2026
+// CORRIGIDO 02/07/2026: bug de sintaxe em evalIn (const/if dentro de return(), 'as HTMLInputElement'
+// em string injetada no browser) que impedia preenchimento de Preço/Quantidade/Desconto/limpeza de cliente.
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -172,6 +174,10 @@ export class WinmaxRPA {
   private async evalIn(iframeId: string, code: string): Promise<unknown> {
     // Usa script injetado no DOM do iframe para evitar restrições de strict mode
     // (window.eval em strict mode bloqueia 'arguments' usado pelo ASP.NET WebForms)
+    // IMPORTANTE: 'code' deve ser sempre uma ÚNICA EXPRESSÃO válida (ex: uma IIFE),
+    // porque é injetado dentro de `return ( code )`. Nunca usar 'const'/'if' soltos aqui,
+    // nem sintaxe TypeScript (ex: 'as HTMLInputElement') — isto corre no browser como
+    // JavaScript puro, não passa pelo compilador tsc.
     return this.page!.evaluate(
       ({ id, code }) => {
         const f = document.getElementById(id) as HTMLIFrameElement
@@ -243,14 +249,18 @@ export class WinmaxRPA {
       // 1. Apagar todas as linhas existentes (padrão DeleteCompound*)
       let tentativas = 0
       while (tentativas < 20) {
+        // CORRIGIDO: tinha '(btns[0] as HTMLElement)' — sintaxe TS inválida em string
+        // injetada no browser. Falhava sempre silenciosamente (apanhado pelo .catch abaixo),
+        // fazendo crer que não havia linhas a apagar mesmo quando havia — documentos
+        // abandonados podiam ficar com linhas residuais.
         const temLinhas = await this.evalIn(di, `
-          (() => {
-            const btns = Array.from(document.querySelectorAll('[id^="DeleteCompound"]'))
-            if (btns.length === 0) return false
-            ;(btns[0] as HTMLElement).click()
-            return true
+          (function() {
+            var btns = document.querySelectorAll('[id^="DeleteCompound"]');
+            if (btns.length === 0) return false;
+            btns[0].click();
+            return true;
           })()
-        `).catch(() => false)
+        `).catch((e) => { this.log(`  ⚠️ Falha ao apagar linha: ${e}`); return false })
         
         if (!temLinhas) break
         
@@ -264,10 +274,15 @@ export class WinmaxRPA {
       }
 
       // 2. Limpar campo de cliente
+      // CORRIGIDO: era `const el = ... as HTMLInputElement` solto (sintaxe TS inválida
+      // no browser, e 'const'+'if' não cabem dentro de `return(...)`). Agora IIFE válida.
       await this.evalIn(di, `
-        const el = document.getElementById('txtEntityCode') as HTMLInputElement
-        if (el) { el.value = ''; el.dispatchEvent(new Event('change', { bubbles: true })) }
-      `).catch(() => {})
+        (function() {
+          var el = document.getElementById('txtEntityCode');
+          if (el) { el.value = ''; el.dispatchEvent(new Event('change', { bubbles: true })); }
+          return true;
+        })()
+      `).catch((e) => this.log(`  ⚠️ Falha ao limpar cliente: ${e}`))
       await this.page!.waitForTimeout(300)
 
       // 3. Sair do documento
@@ -485,8 +500,22 @@ export class WinmaxRPA {
     await this.page!.waitForTimeout(500)
 
     const erroArtigo = await this.verificarErro(di)
-    if (erroArtigo) throw new ErroLinhaArtigo(n, linha.artigo_ref,
-      `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
+    if (erroArtigo) {
+      // CORRIGIDO 02/07/2026: produção registou "Artigo não definido ou inválido" para o
+      // código TX, que é um artigo válido e existente (confirmado no WinMax4 e via MCP,
+      // reproduzindo a mesma sequência sem erro). O artigo_ref já vem .trim().toUpperCase()
+      // desde emissaoJob.ts, por isso não é problema de dados sujos. A hipótese mais provável
+      // é uma mensagem de validação transitória do WinMax4 (ex: sob latência/carga no Render),
+      // que se resolve sozinha pouco depois. Por isso, reconfirmamos antes de desistir da linha.
+      await this.log(`  ⏳ Possível erro no artigo "${linha.artigo_ref}" — a reconfirmar antes de desistir...`)
+      await this.page!.waitForTimeout(1500)
+      const erroArtigoConfirmado = await this.verificarErro(di)
+      if (erroArtigoConfirmado) {
+        throw new ErroLinhaArtigo(n, linha.artigo_ref,
+          `Linha ${n} — "${linha.artigo_ref}": ${erroArtigoConfirmado}`)
+      }
+      await this.log(`  ✅ Falso alarme — mensagem desapareceu, artigo "${linha.artigo_ref}" válido`)
+    }
 
     // Aguardar que txtUnitaryPrice esteja enabled (artigo carregado)
     await this.page!.waitForFunction(
@@ -500,29 +529,55 @@ export class WinmaxRPA {
     ).catch(() => {})
 
     // Preencher preço sempre — se for 0 força zero (substitui o preço da ficha)
+    // CORRIGIDO: bloco anterior tinha 'const ... as HTMLInputElement' e 'if' soltos dentro
+    // de return(...) do evalIn — nunca chegava a correr (erro de sintaxe silencioso).
     const precoStr = String(linha.preco_unitario).replace('.', ',')
     await this.evalIn(di, `
-      const el = document.getElementById('txtUnitaryPrice') as HTMLInputElement
-      if (el) { el.value = '${precoStr}'; el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })) }
-    `).catch(() => {})
+      (function() {
+        var el = document.getElementById('txtUnitaryPrice');
+        if (el) {
+          el.value = '${precoStr}';
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
+        return true;
+      })()
+    `).catch((e) => this.log(`  ⚠️ Falha ao preencher preço: ${e}`))
     await this.page!.waitForTimeout(300)
 
     // Quantidade — preencher sempre via evaluate para garantir o valor correto
+    // CORRIGIDO: mesmo problema de sintaxe do bloco do preço.
     const qtdStr = String(linha.quantidade).replace('.', ',')
     await this.evalIn(di, `
-      const el = document.getElementById('txtQuantity') as HTMLInputElement
-      if (el) { el.value = '${qtdStr}'; el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })) }
-    `).catch(() => {})
+      (function() {
+        var el = document.getElementById('txtQuantity');
+        if (el) {
+          el.value = '${qtdStr}';
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
+        return true;
+      })()
+    `).catch((e) => this.log(`  ⚠️ Falha ao preencher quantidade: ${e}`))
     await this.page!.waitForTimeout(500)
 
     // Desconto (vem do Excel)
+    // CORRIGIDO: bloco anterior não tinha 'if (d)' de proteção nem '.catch()' —
+    // se o elemento não existisse ou o script falhasse, a exceção subia e podia
+    // interromper todo o criarFatura a meio, deixando o documento aberto/preso.
     if (linha.desconto_pct > 0) {
       await this.evalIn(di, `
-        const d = document.getElementById('txtDiscount1');
-        d.value = '${String(linha.desconto_pct).replace('.', ',')}';
-        d.dispatchEvent(new Event('change', { bubbles: true }));
-        d.dispatchEvent(new Event('blur', { bubbles: true }));
-      `)
+        (function() {
+          var d = document.getElementById('txtDiscount1');
+          if (d) {
+            d.value = '${String(linha.desconto_pct).replace('.', ',')}';
+            d.dispatchEvent(new Event('change', { bubbles: true }));
+            d.dispatchEvent(new Event('blur', { bubbles: true }));
+          }
+          return true;
+        })()
+      `).catch((e) => this.log(`  ⚠️ Falha ao preencher desconto: ${e}`))
+      await this.page!.waitForTimeout(300)
     }
 
     // IVA e descrição vêm da ficha do artigo no WinMax4 — não se preenchem
@@ -534,8 +589,18 @@ export class WinmaxRPA {
     await this.page!.waitForTimeout(1200)
 
     const erroInsert = await this.verificarErro(di)
-    if (erroInsert) throw new ErroLinhaArtigo(n, linha.artigo_ref,
-      `Linha ${n} — "${linha.artigo_ref}": ${erroInsert}`)
+    if (erroInsert) {
+      // Mesma lógica de reconfirmação aplicada acima — evita abandonar o documento
+      // por causa de uma mensagem transitória do WinMax4 logo após o clique em Inserir.
+      await this.log(`  ⏳ Possível erro ao inserir "${linha.artigo_ref}" — a reconfirmar antes de desistir...`)
+      await this.page!.waitForTimeout(1500)
+      const erroInsertConfirmado = await this.verificarErro(di)
+      if (erroInsertConfirmado) {
+        throw new ErroLinhaArtigo(n, linha.artigo_ref,
+          `Linha ${n} — "${linha.artigo_ref}": ${erroInsertConfirmado}`)
+      }
+      await this.log(`  ✅ Falso alarme — mensagem desapareceu, linha "${linha.artigo_ref}" inserida`)
+    }
 
     await this.log(`  📦 Linha ${n}: ${linha.artigo_ref} x${linha.quantidade} @ ${linha.preco_unitario}€`)
   }
