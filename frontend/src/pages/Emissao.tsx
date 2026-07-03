@@ -1,13 +1,17 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, Loader2, ExternalLink, Download } from 'lucide-react'
-import { uploadExcel } from '../services/api'
+import { uploadExcel, ServerWakingError } from '../services/api'
 import { useJob } from '../hooks/useJob'
 import { FaturaResultado } from '../types'
+import ServerWakingBanner from '../components/ServerWakingBanner'
 
 export default function Emissao() {
   const [jobId, setJobId] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [erro, setErro] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  const [serverError, setServerError] = useState<Error | null>(null)
+  const [ultimoFicheiro, setUltimoFicheiro] = useState<File | null>(null)
   const job = useJob(jobId)
 
   const processarFicheiro = useCallback(async (file: File) => {
@@ -15,18 +19,38 @@ export default function Emissao() {
       setErro('Ficheiro inválido. Usa .xlsx, .xls ou .csv')
       return
     }
+    // CORRIGIDO 02/07/2026: não havia NENHUM feedback visual entre clicar/soltar o
+    // ficheiro e a resposta do servidor. Se o backend estivesse "adormecido" (plano
+    // gratuito Render), o fetchWithRetry tenta silenciosamente durante até ~60s sem
+    // qualquer sinal no ecrã — dava a sensação de "nada acontece". Outras páginas do
+    // projeto (Dados, Arquivo, SAFTDashboard, Historico) já tratam disto com um
+    // indicador de loading imediato + ServerWakingBanner; esta página não tinha nenhum.
     setErro('')
+    setServerError(null)
+    setEnviando(true)
+    setUltimoFicheiro(file)
     try {
       const { jobId: id } = await uploadExcel(file)
       setJobId(id)
     } catch (e) {
-      setErro(`Erro ao submeter: ${e}`)
+      if (e instanceof ServerWakingError) {
+        setServerError(e)
+      } else {
+        setErro(`Erro ao submeter: ${e}`)
+      }
+    } finally {
+      setEnviando(false)
     }
   }, [])
+
+  const retentarUpload = useCallback(() => {
+    if (ultimoFicheiro) processarFicheiro(ultimoFicheiro)
+  }, [ultimoFicheiro, processarFicheiro])
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
+    if (enviando) return
     const file = e.dataTransfer.files[0]
     if (file) processarFicheiro(file)
   }
@@ -61,6 +85,8 @@ export default function Emissao() {
         💡 Para PDFs guardados automaticamente em <strong>C:\PDF</strong>: Chrome → Definições → Transferências → desativa "Perguntar onde guardar cada ficheiro" e define a pasta como <strong>C:\PDF</strong>
       </p>
 
+      <ServerWakingBanner error={serverError} onRetry={retentarUpload} />
+
       {!jobId && (
         <>
           {/* Zona de drop */}
@@ -68,12 +94,22 @@ export default function Emissao() {
             onDrop={onDrop}
             onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
             onDragLeave={() => setIsDragging(false)}
-            className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors cursor-pointer
+            className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors ${enviando ? 'cursor-wait' : 'cursor-pointer'}
               ${isDragging ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-gray-300 bg-white'}`}
-            onClick={() => document.getElementById('fileInput')?.click()}>
-            <Upload size={32} className="mx-auto mb-3 text-gray-300"/>
-            <p className="text-sm font-medium text-gray-700">Arrasta o Excel aqui ou clica para selecionar</p>
-            <p className="text-xs text-gray-400 mt-1">.xlsx · .xls · .csv</p>
+            onClick={() => !enviando && document.getElementById('fileInput')?.click()}>
+            {enviando ? (
+              <>
+                <Loader2 size={32} className="mx-auto mb-3 text-blue-400 animate-spin"/>
+                <p className="text-sm font-medium text-gray-700">A enviar ficheiro...</p>
+                <p className="text-xs text-gray-400 mt-1">Se o servidor estiver a acordar, pode demorar até 1 minuto</p>
+              </>
+            ) : (
+              <>
+                <Upload size={32} className="mx-auto mb-3 text-gray-300"/>
+                <p className="text-sm font-medium text-gray-700">Arrasta o Excel aqui ou clica para selecionar</p>
+                <p className="text-xs text-gray-400 mt-1">.xlsx · .xls · .csv</p>
+              </>
+            )}
             <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" className="hidden"
               onChange={e => e.target.files?.[0] && processarFicheiro(e.target.files[0])}/>
           </div>
