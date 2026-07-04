@@ -858,7 +858,31 @@ export class WinmaxRPA {
     }).catch(() => {})
     await this.page!.waitForTimeout(500)
 
-    await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 15000)
+    // CORRIGIDO 04/07/2026: timeout de 15s era demasiado curto — confirmado em produção
+    // (fatura 3/4, "INTER PARTNER ASSISTANCE") que o WinMax4 pode demorar mais tempo a
+    // preparar a janela de fecho/impressão, especialmente com documentos de várias linhas
+    // ou sob carga do servidor. A falha aqui interrompeu a fatura a meio e deixou o browser
+    // num estado que a fatura seguinte teve dificuldade em recuperar. Aumentado para 30s
+    // (consistente com outras esperas dependentes do servidor no resto do código), e
+    // adicionada uma segunda tentativa: se ainda assim não aparecer, tenta clicar de novo
+    // em diálogos de confirmação intermédios (podem ter aparecido tarde) antes de desistir.
+    const apareceuClose = await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 30000)
+      .then(() => true).catch(() => false)
+
+    if (!apareceuClose) {
+      await this.log('  ⏳ Janela de fecho ainda não apareceu após 30s — a tentar diálogos intermédios de novo...')
+      await this.page!.evaluate(() => {
+        const di = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+        const doc = di?.contentDocument
+        const confirmBtn = doc?.getElementById('LbConfirmOnCloseWindow') as HTMLElement
+          || doc?.getElementById('LbConfirmOnCloseValuesWindow') as HTMLElement
+          || doc?.getElementById('LbConfirmCloseCreditDocumentWithoutDetailRelation') as HTMLElement
+        if (confirmBtn && confirmBtn.offsetParent !== null) confirmBtn.click()
+      }).catch(() => {})
+      // Última tentativa, com mais paciência ainda — se falhar aqui, desiste mesmo
+      // (a exceção sobe e a fatura é marcada como falhada, sem travar as restantes)
+      await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 20000)
+    }
     await this.page!.waitForTimeout(500)
 
     // Seleciona template PDF se configurado
