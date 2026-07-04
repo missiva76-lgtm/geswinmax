@@ -185,6 +185,28 @@ export class WinmaxRPA {
     }, iframeId).catch(() => false)
   }
 
+  private async dismissarOverlayPreso(): Promise<void> {
+    // CORRIGIDO 04/07/2026: o WinMax4 mostra um overlay "a processar" (ShowProcessingPanel(),
+    // visível no onclick do botão "Inserir": id="overlay_modal") sempre que envia um pedido
+    // ao servidor, e esconde-o quando a resposta chega. Se essa resposta nunca chegar (rede,
+    // lentidão do servidor), o overlay fica preso visível PARA SEMPRE, bloqueando todos os
+    // cliques reais seguintes — confirmado em produção: "locator.click: Timeout 30000ms
+    // exceeded ... <div id="overlay_modal"> intercepts pointer events", repetido em 2 faturas
+    // consecutivas (o overlay vive ao nível da página principal, não do iframe do documento,
+    // por isso sobrevive a abrir/fechar documentos), até o próprio browser falhar.
+    // Havia já uma proteção parcial (esperar até 10s que desaparecesse sozinho) em
+    // adicionarComentario, mas isso não chega quando fica preso permanentemente — por isso
+    // aqui FORÇAMOS a ocultação em vez de apenas esperar, e aplicamos antes de todos os
+    // cliques/preenchimentos reais no documento.
+    await this.page!.evaluate(() => {
+      const overlay = document.getElementById('overlay_modal') as HTMLElement | null
+      if (overlay) {
+        overlay.style.display = 'none'
+        overlay.style.pointerEvents = 'none'
+      }
+    }).catch(() => {})
+  }
+
   private async evalIn(iframeId: string, code: string): Promise<unknown> {
     // Usa script injetado no DOM do iframe para evitar restrições de strict mode
     // (window.eval em strict mode bloqueia 'arguments' usado pelo ASP.NET WebForms)
@@ -439,6 +461,7 @@ export class WinmaxRPA {
     })
 
     // Muda tipo de documento via frameLocator (mais fiável no Playwright headless)
+    await this.dismissarOverlayPreso()
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#ddlDocumentType')
       .selectOption(tipoVal)
@@ -461,6 +484,7 @@ export class WinmaxRPA {
     await this.log(`  📄 Tipo documento: ${fatura.tipo_documento} (val=${tipoAtual})${tipoOk ? '' : ' ⚠️ não confirmado'}`)
 
     // Preenche código do cliente usando frameLocator do Playwright (mais fiável que evalIn para inputs)
+    await this.dismissarOverlayPreso()
     const frame = this.page!.frameLocator(`#${di}`)
     await frame.locator('#txtEntityCode').fill(String(fatura.cliente_codigo))
     await frame.locator('#txtEntityCode').press('Tab')
@@ -496,6 +520,7 @@ export class WinmaxRPA {
     }
 
     // Clica "Inserir" para abrir o formulário de nova linha
+    await this.dismissarOverlayPreso()
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#wucButtonInsertDocumentDetail_linkButton1')
       .click()
@@ -503,6 +528,7 @@ export class WinmaxRPA {
     await this.page!.waitForTimeout(300)
 
     // Insere referência do artigo via frameLocator — WinMax4 preenche descrição e IVA automaticamente
+    await this.dismissarOverlayPreso()
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#txtArticleCode')
       .fill(linha.artigo_ref)
@@ -680,6 +706,7 @@ export class WinmaxRPA {
     }
 
     // Clica botão "Inserir" via frameLocator (mais fiável que window.InsertDocumentDetail)
+    await this.dismissarOverlayPreso()
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#wucButtonInsertDocumentDetail_linkButton1')
       .click()
@@ -711,13 +738,9 @@ export class WinmaxRPA {
     }).catch(() => false)
     if (!tem) { await this.log('  💬 Artigo sem textarea de comentário'); return }
 
-    // Aguarda que o overlay_modal desapareça antes de clicar
-    await this.page!.waitForFunction(
-      () => !document.getElementById('overlay_modal') ||
-            (document.getElementById('overlay_modal') as HTMLElement).style.display === 'none' ||
-            !(document.getElementById('overlay_modal') as HTMLElement).offsetParent,
-      { timeout: 10000, polling: 300 }
-    ).catch(() => {})
+    // Força a ocultação do overlay em vez de apenas esperar que desapareça sozinho —
+    // já observámos em produção que pode ficar preso indefinidamente (ver dismissarOverlayPreso).
+    await this.dismissarOverlayPreso()
 
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('input[id^="DetailPropertyRemarks"]')
@@ -843,6 +866,7 @@ export class WinmaxRPA {
       `!!document.getElementById('wucButtonCancelDocumentDetail_linkButton1')`
     ) as boolean
     if (temCancelar) {
+      await this.dismissarOverlayPreso()
       await this.page!.frameLocator('#DocumentIssue_content')
         .locator('#wucButtonCancelDocumentDetail_linkButton1')
         .click()
@@ -860,6 +884,7 @@ export class WinmaxRPA {
       'DocumentIssue_content',
       { timeout: 30000, polling: 500 }
     ).catch(() => {})
+    await this.dismissarOverlayPreso()
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#wucButtonClose_linkButton1')
       .click({ timeout: 15000 })
