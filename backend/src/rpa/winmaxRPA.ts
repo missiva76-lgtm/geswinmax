@@ -729,14 +729,72 @@ export class WinmaxRPA {
     await this.log(`  📦 Linha ${n}: ${linha.artigo_ref} x${linha.quantidade} @ ${linha.preco_unitario}€`)
   }
 
-  private async adicionarComentario(comentario: string): Promise<void> {
+  private normalizarComentario(txt: string): string {
+    return txt.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
+  }
+
+  private async verificarEReabrirComentario(comentarioEsperado: string): Promise<boolean> {
+    // Duplo check redundante: reabre a janela de comentário depois de a termos fechado,
+    // e confirma que o texto ficou mesmo guardado — em vez de assumir sucesso só porque
+    // o clique em "Confirmar" não deu erro visível.
+    try {
+      await this.dismissarOverlayPreso()
+      await this.page!.frameLocator('#DocumentIssue_content')
+        .locator('input[id^="DetailPropertyRemarks"]')
+        .last()
+        .click({ timeout: 5000 })
+      await this.page!.waitForTimeout(1000)
+      const abriu = await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 5000)
+        .then(() => true).catch(() => false)
+      if (!abriu) return false
+
+      const valorAtual = await this.page!.evaluate(() => {
+        const f = document.getElementById('DocumentIssueDocumentDetailRemarks_content') as HTMLIFrameElement
+        return (f?.contentDocument?.getElementById('txtRemarks') as HTMLTextAreaElement)?.value || ''
+      })
+
+      // Fecha a janela de novo (reconfirma o mesmo texto lido — inofensivo e idempotente)
+      await this.page!.evaluate(() => {
+        const f = document.getElementById('DocumentIssueDocumentDetailRemarks_content') as HTMLIFrameElement
+        ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      })
+      await this.page!.waitForTimeout(800)
+
+      return this.normalizarComentario(valorAtual) === this.normalizarComentario(comentarioEsperado)
+    } catch {
+      return false
+    }
+  }
+
+  private async adicionarComentario(comentario: string, tentativa = 1): Promise<void> {
     const di = 'DocumentIssue_content'
-    // Verifica se existe botão de comentário via page.evaluate (mais robusto que evalIn)
-    const tem = await this.page!.evaluate(() => {
-      const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
-      return !!f?.contentDocument?.querySelector('input[id^="DetailPropertyRemarks"]')
-    }).catch(() => false)
-    if (!tem) { await this.log('  💬 Artigo sem textarea de comentário'); return }
+    const maxTentativas = 2
+
+    // CORRIGIDO 04/07/2026: a verificação de existência do botão de comentário era
+    // IMEDIATA, sem esperar o WinMax4 desenhar o ícone (aparece só depois de um postback
+    // assíncrono ao inserir a linha). Em produção isto falhava intermitentemente
+    // ("Artigo sem textarea de comentário") mesmo em artigos COM comentário no Excel —
+    // confirmado com a fatura F25 (ZURICH), preço 26,49€, comentário "Marca: JEEP...".
+    // Agora espera-se (com polling) até 8s que o botão apareça antes de desistir, e há
+    // um sistema de repetição com duplo check para confirmar que o texto ficou guardado.
+    const apareceu = await this.page!.waitForFunction(
+      (id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        return !!f?.contentDocument?.querySelector('input[id^="DetailPropertyRemarks"]')
+      },
+      di,
+      { timeout: 8000, polling: 300 }
+    ).then(() => true).catch(() => false)
+
+    if (!apareceu) {
+      if (tentativa < maxTentativas) {
+        await this.log(`  ⏳ Botão de comentário ainda não visível (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
+        await this.page!.waitForTimeout(1000)
+        return this.adicionarComentario(comentario, tentativa + 1)
+      }
+      await this.log('  ⚠️ Artigo sem textarea de comentário (confirmado após espera) — comentário NÃO aplicado')
+      return
+    }
 
     // Força a ocultação do overlay em vez de apenas esperar que desapareça sozinho —
     // já observámos em produção que pode ficar preso indefinidamente (ver dismissarOverlayPreso).
@@ -747,7 +805,17 @@ export class WinmaxRPA {
       .last()
       .click({ timeout: 10000 })
     await this.page!.waitForTimeout(1500)
-    await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
+    const dialogAbriu = await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
+      .then(() => true).catch(() => false)
+
+    if (!dialogAbriu) {
+      if (tentativa < maxTentativas) {
+        await this.log(`  ⏳ Janela de comentário não abriu (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
+        return this.adicionarComentario(comentario, tentativa + 1)
+      }
+      await this.log(`  ❌ Janela de comentário não abriu após ${maxTentativas} tentativas — comentário NÃO aplicado`)
+      return
+    }
 
     await this.page!.evaluate(({ txt }) => {
       const f = document.getElementById('DocumentIssueDocumentDetailRemarks_content') as HTMLIFrameElement
@@ -759,8 +827,19 @@ export class WinmaxRPA {
       const f = document.getElementById('DocumentIssueDocumentDetailRemarks_content') as HTMLIFrameElement
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
-    await this.page!.waitForTimeout(1000)
-    await this.log('  💬 Comentário adicionado')
+    await this.page!.waitForTimeout(1200)
+
+    const confirmado = await this.verificarEReabrirComentario(comentario)
+    if (!confirmado) {
+      if (tentativa < maxTentativas) {
+        await this.log(`  ⚠️ Comentário não confirmado após aplicar (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
+        return this.adicionarComentario(comentario, tentativa + 1)
+      }
+      await this.log(`  ❌ Comentário não pôde ser confirmado após ${maxTentativas} tentativas`)
+      return
+    }
+
+    await this.log('  💬 Comentário adicionado e confirmado')
   }
 
   private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = '', clienteCodigo = ''): Promise<string> {

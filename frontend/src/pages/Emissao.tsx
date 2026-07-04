@@ -13,6 +13,14 @@ export default function Emissao() {
   const [serverError, setServerError] = useState<Error | null>(null)
   const [ultimoFicheiro, setUltimoFicheiro] = useState<File | null>(null)
   const job = useJob(jobId)
+  const logRef = useRef<HTMLDivElement>(null)
+
+  // Scroll automático para a última linha do log sempre que chega nova informação —
+  // sem isto, com a caixa maior (200 linhas visíveis) seria preciso arrastar manualmente
+  // para ver as entradas mais recentes.
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [job?.log])
 
   const processarFicheiro = useCallback(async (file: File) => {
     if (!file.name.match(/\.(xlsx|xls|csv)$/i)) {
@@ -237,8 +245,8 @@ export default function Emissao() {
           {/* Log */}
           <div className="px-5 py-3 border-b border-gray-50">
             <p className="text-xs font-medium text-gray-500 mb-2">Log</p>
-            <div className="bg-gray-900 rounded-lg p-3 h-32 overflow-y-auto font-mono text-xs">
-              {job.log.slice(-20).map((linha, i) => (
+            <div ref={logRef} className="bg-gray-900 rounded-lg p-3 h-96 overflow-y-auto font-mono text-xs">
+              {job.log.slice(-200).map((linha, i) => (
                 <div key={i} className={
                   linha.includes('❌') ? 'text-red-400' :
                   linha.includes('✅') ? 'text-green-400' :
