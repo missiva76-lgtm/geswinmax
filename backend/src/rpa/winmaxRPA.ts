@@ -83,6 +83,11 @@ export class WinmaxRPA {
   private context: BrowserContext | null = null
   private page: Page | null = null
   private config: RPAConfig
+  // CORRIGIDO 08/07/2026: marca se a fatura ANTERIOR falhou especificamente durante o
+  // fecho do documento (não durante a edição normal) — ver nota detalhada em
+  // imprimirEGuardarPDF. Usado por abrirNovaFatura() para decidir se precisa de uma
+  // recuperação mais agressiva (recarregar a página) em vez do abandono normal.
+  private falhaDuranteFecho = false
 
   constructor(config: RPAConfig) { this.config = config }
 
@@ -376,6 +381,24 @@ export class WinmaxRPA {
   }
 
   private async abrirNovaFatura(): Promise<void> {
+    // CORRIGIDO 08/07/2026: se a fatura ANTERIOR falhou especificamente durante o fecho
+    // do documento (ver falhaDuranteFecho em imprimirEGuardarPDF), o abandonarDocumento()
+    // normal pode não bastar — foi concebido para um documento ainda em edição, não um
+    // que já entrou no fluxo de "Terminar". Confirmado em produção: depois de uma falha
+    // destas, a fatura seguinte teve um erro espúrio "Cliente inválido" para um cliente
+    // que tinha funcionado momentos antes — sinal de estado de sessão corrompido.
+    // Nestes casos, recarrega-se a página e faz-se login de novo, em vez de apenas
+    // tentar abandonar o documento — mais lento, mas garante um estado limpo.
+    if (this.falhaDuranteFecho) {
+      await this.log('  🔄 A fatura anterior falhou durante o fecho do documento — a recarregar sessão para garantir estado limpo...')
+      this.falhaDuranteFecho = false
+      try {
+        await this.login()
+      } catch (e) {
+        await this.log(`  ⚠️ Falha ao recarregar sessão: ${e} — a tentar recuperação normal`)
+      }
+    }
+
     // Verificar se há documento aberto — se sim, abandonar primeiro
     const documentoAberto = await this.page!.evaluate(() => {
       const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
@@ -792,7 +815,12 @@ export class WinmaxRPA {
         await this.page!.waitForTimeout(1000)
         return this.adicionarComentario(comentario, tentativa + 1)
       }
-      await this.log('  ⚠️ Artigo sem textarea de comentário (confirmado após espera) — comentário NÃO aplicado')
+      // CORRIGIDO 08/07/2026: quando o botão nunca aparece mesmo após esperar, pode
+      // haver uma mensagem de erro/validação escondida do WinMax4 a bloquear o
+      // desenho do ícone (ex: um aviso relacionado com o preço da linha) que não
+      // estávamos a verificar neste ponto. Log-a para diagnóstico, sem interromper.
+      const erroOculto = await this.verificarErro(di)
+      await this.log(`  ⚠️ Artigo sem textarea de comentário (confirmado após espera) — comentário NÃO aplicado${erroOculto ? ` | Mensagem WinMax4: "${erroOculto}"` : ''}`)
       return
     }
 
@@ -879,9 +907,32 @@ export class WinmaxRPA {
           || doc?.getElementById('LbConfirmCloseCreditDocumentWithoutDetailRelation') as HTMLElement
         if (confirmBtn && confirmBtn.offsetParent !== null) confirmBtn.click()
       }).catch(() => {})
-      // Última tentativa, com mais paciência ainda — se falhar aqui, desiste mesmo
-      // (a exceção sobe e a fatura é marcada como falhada, sem travar as restantes)
-      await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 20000)
+      // Última tentativa, com mais paciência ainda
+      const apareceuNaUltima = await this.waitFor('DocumentIssueClose_content', '#wucButtonConfirm_linkButton1', 20000)
+        .then(() => true).catch(() => false)
+
+      if (!apareceuNaUltima) {
+        // CORRIGIDO 08/07/2026: confirmado em produção que clicar em "Terminar" pode já
+        // ter enviado o pedido de fecho ao servidor mesmo que a confirmação visual nunca
+        // apareça — nesse caso, o documento pode ter sido criado no WinMax4 (fatura
+        // "fantasma") apesar de o nosso código marcar esta fatura como falhada. Verifica-se
+        // aqui se já foi atribuído um número de documento, para pelo menos AVISAR
+        // claramente em vez de ficar em silêncio sobre esta possibilidade.
+        const numeroJaAtribuido = await this.evalIn('DocumentIssue_content',
+          `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
+        ).catch(() => '') as string
+        if (numeroJaAtribuido) {
+          await this.log(`  🚨 ATENÇÃO: número de documento "${numeroJaAtribuido}" já foi atribuído — o documento PODE TER SIDO CRIADO no WinMax4 apesar deste erro. Verificar manualmente antes de reenviar.`)
+        }
+        // Marca que esta falha aconteceu especificamente DURANTE o fecho — a próxima
+        // fatura vai usar uma recuperação mais agressiva (ver abrirNovaFatura), já que
+        // abandonarDocumento() foi concebido para um documento ainda em edição, não um
+        // que já entrou no fluxo de fecho (pode deixar o estado da sessão corrompido,
+        // como observado: erro "Cliente inválido" espúrio na fatura seguinte, para um
+        // cliente que tinha funcionado sem problemas momentos antes).
+        this.falhaDuranteFecho = true
+        throw new Error(`Timeout ao aguardar janela de fecho do documento (após 2 tentativas, ~50s)${numeroJaAtribuido ? ` — possível documento fantasma nº ${numeroJaAtribuido}` : ''}`)
+      }
     }
     await this.page!.waitForTimeout(500)
 
