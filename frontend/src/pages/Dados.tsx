@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Search, RefreshCw, Download, ChevronUp, ChevronDown } from 'lucide-react'
-import { getArtigos, triggerSync } from '../services/api'
+import { getArtigos, triggerSync, getJob } from '../services/api'
 import ServerWakingBanner from '../components/ServerWakingBanner'
 import { Artigo } from '../types'
 import * as XLSX from 'xlsx'
@@ -100,6 +100,7 @@ export default function Dados() {
   const [dataFim, setDF]        = useState('')
   const [loading, setLoading]   = useState(false)
   const [syncing, setSyncing]   = useState(false)
+  const [syncMsg, setSyncMsg]   = useState('')
   const [serverError, setServerError] = useState<Error | null>(null)
   const [page, setPage]         = useState(1)
   const [sortField, setSortField] = useState('data')
@@ -140,9 +141,44 @@ export default function Dados() {
   }, [tab])
 
   const handleSync = async () => {
+    // CORRIGIDO 27/07/2026: esta função nunca esperava de facto pela sincronização
+    // terminar — só 4 segundos fixos, quando o próprio aviso da Sincronização
+    // Completa diz "pode demorar 3-5 minutos". Além disso, só voltava a pedir
+    // Artigos, nunca Vendas/Compras — por isso "Última sincronização" nunca
+    // avançava nessas tabs mesmo depois de uma sincronização real e bem sucedida.
     setSyncing(true)
-    await triggerSync().catch(() => {})
-    setTimeout(() => { setSyncing(false); pesquisarArtigos('') }, 4000)
+    setSyncMsg('A iniciar sincronização...')
+    try {
+      const { jobId } = await triggerSync()
+      const poll = async (n = 0): Promise<void> => {
+        if (n > 200) { // ~10 minutos de margem (sync pode demorar 3-5 min)
+          setSyncing(false)
+          setSyncMsg('⚠️ A sincronização está a demorar muito — verifica o Dashboard')
+          return
+        }
+        const job = await getJob(jobId).catch(() => null)
+        if (job?.estado === 'concluido') {
+          setSyncing(false)
+          setSyncMsg('✅ Sincronização concluída')
+          pesquisarArtigos(q)
+          carregarMovimentos('vendas')
+          carregarMovimentos('compras')
+          setTimeout(() => setSyncMsg(''), 5000)
+          return
+        }
+        if (job?.estado === 'erro') {
+          setSyncing(false)
+          setSyncMsg(`❌ Sincronização falhou: ${job.erro_geral || 'erro desconhecido'}`)
+          return
+        }
+        setSyncMsg(`A sincronizar... (${n * 3}s)`)
+        setTimeout(() => poll(n + 1), 3000)
+      }
+      poll()
+    } catch (e: any) {
+      setSyncing(false)
+      setSyncMsg(`❌ Erro ao iniciar sincronização: ${e.message}`)
+    }
   }
 
   const handleSort = (field: string) => {
@@ -300,6 +336,12 @@ export default function Dados() {
           </button>
         </div>
       </div>
+
+      {syncMsg && (
+        <p className={`text-xs mb-3 ${syncMsg.startsWith('❌') ? 'text-red-500' : syncMsg.startsWith('✅') ? 'text-green-600' : 'text-gray-400'}`}>
+          {syncMsg}
+        </p>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1.5 mb-2 flex-wrap">
