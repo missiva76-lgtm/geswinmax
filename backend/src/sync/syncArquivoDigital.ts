@@ -189,7 +189,12 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     browser = await chromium.launch({
       headless: true,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
-      args: ['--disable-dev-shm-usage'],
+      args: [
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-gpu',
+      ],
     })
     const context = await browser.newContext({
       locale: 'pt-PT',

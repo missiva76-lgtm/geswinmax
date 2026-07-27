@@ -107,18 +107,24 @@ export class WinmaxRPA {
     this.releaseLock = await acquireBrowserLock()
     // Usa chromium em vez de chromium-headless-shell (mais compatível com Render)
     // CORRIGIDO 27/07/2026: "Target page, context or browser has been closed" —
-    // sintoma clássico de o Chromium ficar sem espaço em /dev/shm, que em containers
-    // (Render, Docker) costuma vir limitado a 64MB por omissão, independentemente da
-    // RAM total da máquina. --disable-dev-shm-usage força o Chromium a usar /tmp em
-    // vez de /dev/shm, eliminando esta classe de crash. Confirmado em produção: log
-    // de emissão com dezenas de falhas em rajada ("page.waitForFunction: Tim...")
-    // é consistente com este tipo de crash sob carga sustentada.
+    // sintoma clássico de o Chromium ficar sem espaço em /dev/shm em containers
+    // (Render, Docker), mas --disable-dev-shm-usage sozinho não resolveu (confirmado
+    // em produção: crash persistiu mesmo com essa flag). Adicionado o conjunto
+    // completo recomendado para Chromium headless em containers restritos
+    // (--no-sandbox, --disable-setuid-sandbox, --disable-gpu). Se o crash persistir
+    // mesmo assim, é sinal de exaustão genuína de RAM do plano Render, que só se
+    // resolve com upgrade de plano — não há mais flags que compensem falta de memória.
     this.browser = await chromium.launch({ 
       headless: true, 
       slowMo: 40,
       channel: undefined,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
-      args: ['--disable-dev-shm-usage'],
+      args: [
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-gpu',
+      ],
     })
     this.context = await this.browser.newContext({
       locale: 'pt-PT',
