@@ -106,11 +106,19 @@ export class WinmaxRPA {
     // Semáforo: só um browser de cada vez no Render
     this.releaseLock = await acquireBrowserLock()
     // Usa chromium em vez de chromium-headless-shell (mais compatível com Render)
+    // CORRIGIDO 27/07/2026: "Target page, context or browser has been closed" —
+    // sintoma clássico de o Chromium ficar sem espaço em /dev/shm, que em containers
+    // (Render, Docker) costuma vir limitado a 64MB por omissão, independentemente da
+    // RAM total da máquina. --disable-dev-shm-usage força o Chromium a usar /tmp em
+    // vez de /dev/shm, eliminando esta classe de crash. Confirmado em produção: log
+    // de emissão com dezenas de falhas em rajada ("page.waitForFunction: Tim...")
+    // é consistente com este tipo de crash sob carga sustentada.
     this.browser = await chromium.launch({ 
       headless: true, 
       slowMo: 40,
       channel: undefined,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+      args: ['--disable-dev-shm-usage'],
     })
     this.context = await this.browser.newContext({
       locale: 'pt-PT',
@@ -1015,6 +1023,17 @@ export class WinmaxRPA {
       `document.getElementById('lblNextDocumentNumber')?.innerText?.replace(/[()]/g,'').trim() || 'doc'`
     ) as string
 
+    // CORRIGIDO 27/07/2026: esta captura estava a acontecer DEPOIS de clicar em
+    // "Terminar" e depois de todo o fluxo de fecho/PDF já ter corrido — nessa altura
+    // o formulário de edição do documento (onde este campo existe) já não está no
+    // DOM, por isso vinha sempre vazio, tanto em sucessos como em falhas (confirmado:
+    // 100% dos registos no Histórico tinham "Data documento" em branco). Agora
+    // captura-se aqui, no mesmo momento em que já capturamos numPrevisto com
+    // sucesso — prova de que o formulário ainda existe nesta fase.
+    const dataDocumento = await this.evalIn(di,
+      `document.getElementById('txtDocumentDate')?.value || ''`
+    ).catch(() => '') as string
+
     // Cancela linha de edição vazia se estiver aberta
     const temCancelar = await this.evalIn(di,
       `!!document.getElementById('wucButtonCancelDocumentDetail_linkButton1')`
@@ -1067,10 +1086,6 @@ export class WinmaxRPA {
       const novo = path.join(this.config.pastaDestinoPDF, `${nomeSeguro}.pdf`)
       try { fs.renameSync(localPDF, novo) } catch { /**/ }
     }
-
-    const dataDocumento = await this.evalIn(di,
-      `document.getElementById('txtDocumentDate')?.value || ''`
-    ).catch(() => '') as string
 
     return { numDoc: numDoc || 'EMITIDO', localPDF, dataDocumento }
   }

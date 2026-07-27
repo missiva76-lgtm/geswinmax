@@ -313,14 +313,19 @@ export default function Dados() {
 
       {/* Última sincronização — para o utilizador perceber se os dados estão atualizados */}
       {(() => {
-        const ultimaSync = tab === 'artigos' ? ultimaSyncDe(artigos as any)
-          : tab === 'vendas' ? ultimaSyncDe(vendas)
-          : tab === 'compras' ? ultimaSyncDe(compras)
+        const listaAtual = tab === 'artigos' ? artigos as any
+          : tab === 'vendas' ? vendas
+          : tab === 'compras' ? compras
           : null
-        if (!ultimaSync) return null
+        if (!listaAtual) return null
+        const ultimaSync = ultimaSyncDe(listaAtual)
         return (
           <p className="text-xs text-gray-400 mb-4">
-            🕒 Última sincronização: <span className="font-medium text-gray-500">{ultimaSync}</span>
+            {ultimaSync
+              ? <>🕒 Última sincronização: <span className="font-medium text-gray-500">{ultimaSync}</span></>
+              : listaAtual.length > 0
+                ? <span className="text-amber-500">⚠️ Sem registo de data de sincronização nestes dados (podem ter sido importados antes desta funcionalidade existir — faz uma nova sincronização para atualizar).</span>
+                : null}
           </p>
         )
       })()}

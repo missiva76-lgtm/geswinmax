@@ -90,7 +90,9 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     const company = config.company_code || 'AUTOAVENIDA'
     const ficheiro = decodeURIComponent(req.params.ficheiro)
 
-    browser = await chromium.launch({ headless: true })
+    // CORRIGIDO 27/07/2026: ver nota detalhada em syncArquivoDigital.ts — evita
+    // crash do Chromium por falta de espaço em /dev/shm em containers.
+    browser = await chromium.launch({ headless: true, args: ['--disable-dev-shm-usage'] })
     const context = await browser.newContext({ acceptDownloads: true })
     const page    = await context.newPage()
 

@@ -181,7 +181,16 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
 
   try {
     releaseLock = await acquireBrowserLock()
-    browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
+    // CORRIGIDO 27/07/2026: "Target page, context or browser has been closed" —
+    // sintoma clássico de o Chromium ficar sem espaço em /dev/shm, que em containers
+    // (Render, Docker) costuma vir limitado a 64MB por omissão, independentemente da
+    // RAM total da máquina. --disable-dev-shm-usage força o Chromium a usar /tmp em
+    // vez de /dev/shm, eliminando esta classe de crash.
+    browser = await chromium.launch({
+      headless: true,
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+      args: ['--disable-dev-shm-usage'],
+    })
     const context = await browser.newContext({
       locale: 'pt-PT',
       timezoneId: 'Europe/Lisbon',

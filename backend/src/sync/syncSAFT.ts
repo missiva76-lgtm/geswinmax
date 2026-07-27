@@ -260,7 +260,13 @@ export async function syncSAFT(
 
   try {
     releaseLock = await acquireBrowserLock()
-    browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
+    // CORRIGIDO 27/07/2026: ver nota detalhada em syncArquivoDigital.ts — evita
+    // crash do Chromium por falta de espaço em /dev/shm em containers.
+    browser = await chromium.launch({
+      headless: true,
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+      args: ['--disable-dev-shm-usage'],
+    })
     const context = await browser.newContext({
       locale: 'pt-PT',
       timezoneId: 'Europe/Lisbon',
