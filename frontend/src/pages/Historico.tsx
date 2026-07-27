@@ -172,6 +172,7 @@ export default function Historico() {
         </div>
       ) : (
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
@@ -223,6 +224,7 @@ export default function Historico() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

@@ -321,6 +321,7 @@ export default function Dados() {
       {/* Tabela Artigos */}
       {tab === 'artigos' && (
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
@@ -355,6 +356,7 @@ export default function Dados() {
               ))}
             </tbody>
           </table>
+          </div>
           <Pager total={artigosFiltrados.length}/>
         </div>
       )}
@@ -362,6 +364,7 @@ export default function Dados() {
       {/* Tabela Vendas */}
       {tab === 'vendas' && (
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
@@ -392,6 +395,7 @@ export default function Dados() {
               ))}
             </tbody>
           </table>
+          </div>
           <Pager total={vendasFiltradas.length}/>
         </div>
       )}
@@ -399,6 +403,7 @@ export default function Dados() {
       {/* Tabela Compras */}
       {tab === 'compras' && (
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
@@ -429,6 +434,7 @@ export default function Dados() {
               ))}
             </tbody>
           </table>
+          </div>
           <Pager total={comprasFiltradas.length}/>
         </div>
       )}
@@ -436,6 +442,7 @@ export default function Dados() {
       {/* Resumo */}
       {tab === 'resumo' && (
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
@@ -468,6 +475,7 @@ export default function Dados() {
               ))}
             </tbody>
           </table>
+          </div>
           <Pager total={resumoCalculado.length}/>
         </div>
       )}

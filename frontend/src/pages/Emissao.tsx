@@ -187,6 +187,7 @@ export default function Emissao() {
             {/* Exemplo */}
             <div className="mt-4 p-3 bg-blue-50 rounded-lg">
               <p className="text-xs font-medium text-blue-700 mb-2">Exemplo — mesmo cliente, 2 faturas separadas:</p>
+              <div className="overflow-x-auto">
               <table className="text-xs w-full">
                 <thead>
                   <tr className="text-blue-600">
@@ -203,6 +204,7 @@ export default function Emissao() {
                   <tr><td className="pr-3">F3</td><td className="pr-3">100</td><td className="pr-3">FR</td><td>SERV ADM</td></tr>
                 </tbody>
               </table>
+              </div>
               <p className="text-xs text-blue-600 mt-2">F1 e F2 são do mesmo cliente mas emitidas como documentos separados. F3 é outro cliente.</p>
             </div>
             <p className="text-xs text-gray-400 mt-2">Descrição e IVA vêm automaticamente da ficha do artigo no WinMax4.</p>

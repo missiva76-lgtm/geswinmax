@@ -163,6 +163,7 @@ export default function Arquivo() {
 
       {/* Tabela */}
       <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-50 bg-gray-50">
@@ -216,6 +217,7 @@ export default function Arquivo() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

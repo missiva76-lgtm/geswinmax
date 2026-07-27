@@ -239,6 +239,18 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     })
     const page = await context.newPage()
 
+    // CORRIGIDO 20/07/2026: descoberto no winmaxRPA.ts (emissão de faturas) que um
+    // clique pode disparar um diálogo nativo do browser (alert/confirm) que, sem um
+    // handler registado, bloqueia a página inteira até ao timeout — manifestando-se
+    // como "locator.click: Timeout ... performing click action" sem mais nenhum erro.
+    // Como este sync navega a mesma interface WinMax4 (ASP.NET WebForms), aplica-se a
+    // mesma proteção aqui, por precaução, mesmo sem termos confirmado ainda que
+    // aconteceu neste ficheiro especificamente.
+    page.on('dialog', async (dialog) => {
+      await log(`  🔔 Diálogo nativo do browser detetado: [${dialog.type()}] "${dialog.message()}" — a aceitar automaticamente`)
+      await dialog.accept().catch(() => {})
+    })
+
     await loginWinmax(page, config)
     await log('✅ Login OK')
 

@@ -197,6 +197,7 @@ export default function SAFTDashboard() {
           </div>
 
           <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
             {/* Vendas por mês */}
             {tab === 'vendas' && (
               <table className="w-full text-sm">
@@ -283,6 +284,7 @@ export default function SAFTDashboard() {
                 </tbody>
               </table>
             )}
+            </div>
           </div>
         </>
       )}
