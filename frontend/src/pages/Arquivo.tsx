@@ -36,8 +36,18 @@ export default function Arquivo() {
   const [dataFim, setDF]        = useState('')
   const [loading, setLoading]   = useState(true)
   const [syncing, setSyncing]   = useState(false)
+  const [syncLog, setSyncLog]   = useState<string[]>([])
   const [serverError, setServerError] = useState<Error | null>(null)
   const searchRef               = useRef<ReturnType<typeof setTimeout>>()
+  const logRef                  = useRef<HTMLDivElement>(null)
+
+  // CORRIGIDO 27/07/2026: esta página nunca mostrava o log da sincronização —
+  // só o estado (a decorrer/concluído), sem detalhe nenhum do que aconteceu
+  // (quantas páginas, quantos documentos novos encontrados). Sem isto era
+  // impossível perceber porque é que "Importar" às vezes parecia não fazer nada.
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [syncLog])
 
   const pesquisar = async (query: string) => {
     setLoading(true)
@@ -71,6 +81,7 @@ export default function Arquivo() {
 
   const handleSync = async () => {
     setSyncing(true)
+    setSyncLog([])
     const API = import.meta.env.VITE_API_URL || '/api'
     const r = await fetch(`${API}/arquivo/sync`, { method: 'POST' }).then(res => res.json()).catch(() => null)
     const jobId = r?.jobId
@@ -79,6 +90,7 @@ export default function Arquivo() {
     const poll = async (n = 0): Promise<void> => {
       if (n > 120) { setSyncing(false); pesquisar(q); return }
       const job = await fetch(`${API}/jobs/${jobId}`).then(res => res.json()).catch(() => null)
+      if (job?.log) setSyncLog(job.log)
       if (job?.estado === 'concluido' || job?.estado === 'erro') {
         setSyncing(false)
         pesquisar(q)
@@ -128,9 +140,19 @@ export default function Arquivo() {
         </button>
       </div>
 
-      {syncing && (
-        <div className="mb-3 p-3 bg-blue-50 rounded-lg text-xs text-blue-700">
-          A importar o Arquivo Digital. Este processo pode demorar alguns minutos.
+      {(syncing || syncLog.length > 0) && (
+        <div className="mb-3 bg-gray-900 rounded-lg p-3 h-48 overflow-y-auto font-mono text-xs" ref={logRef}>
+          {syncing && syncLog.length === 0 && (
+            <div className="text-gray-300">A iniciar importação do Arquivo Digital...</div>
+          )}
+          {syncLog.map((linha, i) => (
+            <div key={i} className={
+              linha.includes('❌') ? 'text-red-400' :
+              linha.includes('✅') ? 'text-green-400' :
+              linha.includes('⚠️') ? 'text-yellow-400' : 'text-gray-300'}>
+              {linha}
+            </div>
+          ))}
         </div>
       )}
 

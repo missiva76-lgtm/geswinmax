@@ -25,6 +25,7 @@ interface Movimento {
   total: number
   total_sem_iva?: number
   vendedor?: string
+  ultima_sync?: { seconds: number }
 }
 
 interface ArticlePurchaseSale {
@@ -50,6 +51,23 @@ function exportarExcel(dados: Record<string, unknown>[], nomeTab: string) {
 }
 
 const fmt = (n: number) => (n || 0).toFixed(2).replace('.', ',') + ' €'
+
+const fmtTs = (ts?: { seconds: number }) => {
+  if (!ts?.seconds) return null
+  return new Date(ts.seconds * 1000).toLocaleDateString('pt-PT', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  })
+}
+
+// Devolve a data do registo mais recentemente sincronizado numa lista (campo
+// ultima_sync gravado pelo backend em cada artigo/movimento), para o utilizador
+// perceber se os dados estão atualizados sem ter de adivinhar.
+const ultimaSyncDe = (lista: Array<{ ultima_sync?: { seconds: number } }>): string | null => {
+  const segundos = lista.map(x => x.ultima_sync?.seconds || 0).filter(Boolean)
+  if (segundos.length === 0) return null
+  return fmtTs({ seconds: Math.max(...segundos) })
+}
 
 function SortIcon({ field, sortField, sortDir }: { field: string; sortField: string; sortDir: SortDir }) {
   if (sortField !== field) return <span className="text-gray-300 ml-1">↕</span>
@@ -278,7 +296,7 @@ export default function Dados() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1.5 mb-4 flex-wrap">
+      <div className="flex gap-1.5 mb-2 flex-wrap">
         {([['artigos','Artigos'],['vendas','Movimentos de venda'],['compras','Movimentos de compra'],['resumo','Resumo Compras/Vendas']] as [Tab,string][]).map(([id,label]) => (
           <button key={id} onClick={() => { setTab(id); setPage(1) }}
             className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${tab===id ? 'bg-teal-50 text-teal-700 border-teal-200' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
@@ -286,6 +304,20 @@ export default function Dados() {
           </button>
         ))}
       </div>
+
+      {/* Última sincronização — para o utilizador perceber se os dados estão atualizados */}
+      {(() => {
+        const ultimaSync = tab === 'artigos' ? ultimaSyncDe(artigos as any)
+          : tab === 'vendas' ? ultimaSyncDe(vendas)
+          : tab === 'compras' ? ultimaSyncDe(compras)
+          : null
+        if (!ultimaSync) return null
+        return (
+          <p className="text-xs text-gray-400 mb-4">
+            🕒 Última sincronização: <span className="font-medium text-gray-500">{ultimaSync}</span>
+          </p>
+        )
+      })()}
 
       {/* Filtros */}
       <div className="flex gap-2 mb-4 flex-wrap">

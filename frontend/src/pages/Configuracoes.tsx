@@ -10,6 +10,45 @@ interface TipoDoc {
   valor: string
 }
 
+// CORRIGIDO 20/07/2026: este componente estava definido DENTRO de Configuracoes(),
+// fechando sobre `config`/`handleChange`/`showPass` por closure. Isso fazia com que
+// o React recriasse uma função (logo, um "tipo" de componente) nova a cada
+// re-render — e como o estado muda a cada tecla premida (onChange -> setConfig),
+// o campo de input era desmontado e remontado a cada carácter, perdendo o foco e
+// obrigando a clicar de novo no campo para continuar a escrever. Mover para fora
+// do componente pai, recebendo tudo por props, resolve isto por completo.
+function Campo({ label, field, type = 'text', placeholder = '', value, onChange, showPass, onToggleShowPass }: {
+  label: string
+  field: string
+  type?: string
+  placeholder?: string
+  value: string
+  onChange: (field: string, value: string) => void
+  showPass: boolean
+  onToggleShowPass: () => void
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <div className="relative">
+        <input
+          type={field === 'password' && !showPass ? 'password' : type}
+          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-300"
+          placeholder={placeholder}
+          value={value ?? ''}
+          onChange={e => onChange(field, e.target.value)}
+          autoComplete={field === 'password' ? 'new-password' : 'off'}/>
+        {field === 'password' && (
+          <button type="button" onClick={onToggleShowPass}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400">
+            {showPass ? <EyeOff size={14}/> : <Eye size={14}/>}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function SyncButton() {
   const [estado, setEstado] = useState<'idle'|'running'|'done'|'erro'>('idle')
   const [msg, setMsg] = useState('')
@@ -117,29 +156,6 @@ export default function Configuracoes() {
     setConfig(prev => ({ ...prev, [field]: value }))
   }
 
-  const Campo = ({ label, field, type = 'text', placeholder = '' }: {
-    label: string; field: string; type?: string; placeholder?: string
-  }) => (
-    <div>
-      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-      <div className="relative">
-        <input
-          type={field === 'password' && !showPass ? 'password' : type}
-          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-300"
-          placeholder={placeholder}
-          value={(config as any)[field] ?? ''}
-          onChange={e => handleChange(field, e.target.value)}
-          autoComplete={field === 'password' ? 'new-password' : 'off'}/>
-        {field === 'password' && (
-          <button type="button" onClick={() => setShowPass(!showPass)}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400">
-            {showPass ? <EyeOff size={14}/> : <Eye size={14}/>}
-          </button>
-        )}
-      </div>
-    </div>
-  )
-
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-900 mb-6">Configurações</h2>
@@ -150,10 +166,14 @@ export default function Configuracoes() {
         <div className="bg-white border border-gray-100 rounded-xl p-5">
           <p className="text-sm font-medium text-gray-700 mb-4">Ligação WinMax4</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Campo label="URL base" field="winmax_url" placeholder="https://app102.winmax4.com"/>
-            <Campo label="Company code" field="company_code" placeholder="AUTOAVENIDA"/>
-            <Campo label="Utilizador" field="utilizador" placeholder="ADMIN"/>
-            <Campo label="Password (deixa vazio para manter)" field="password" placeholder="Nova password (opcional)"/>
+            <Campo label="URL base" field="winmax_url" placeholder="https://app102.winmax4.com"
+              value={config.winmax_url} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
+            <Campo label="Company code" field="company_code" placeholder="AUTOAVENIDA"
+              value={config.company_code} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
+            <Campo label="Utilizador" field="utilizador" placeholder="ADMIN"
+              value={config.utilizador} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
+            <Campo label="Password (deixa vazio para manter)" field="password" placeholder="Nova password (opcional)"
+              value={config.password} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
           </div>
         </div>
 
@@ -170,7 +190,8 @@ export default function Configuracoes() {
                 {tipos.map(t => <option key={t.codigo} value={t.codigo}>{t.codigo} — {t.descricao}</option>)}
               </select>
             </div>
-            <Campo label="Template PDF (.rpx)" field="template_pdf"/>
+            <Campo label="Template PDF (.rpx)" field="template_pdf"
+              value={config.template_pdf} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
           </div>
         </div>
 
@@ -233,10 +254,25 @@ export default function Configuracoes() {
         <div className="bg-white border border-gray-100 rounded-xl p-5">
           <p className="text-sm font-medium text-gray-700 mb-4">Sincronização automática</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Campo label="Data de início" field="sync_data_inicio" placeholder="01-01-2000"/>
-            <Campo label="Data de fim (vazio = hoje)" field="sync_data_fim" placeholder="DD-MM-YYYY"/>
-            <Campo label="Hora da sync diária" field="sync_hora" placeholder="02:00"/>
+            <Campo label="Data de início" field="sync_data_inicio" placeholder="01-01-2000"
+              value={config.sync_data_inicio} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
+            <Campo label="Data de fim (vazio = hoje)" field="sync_data_fim" placeholder="DD-MM-YYYY"
+              value={config.sync_data_fim} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
+            <Campo label="Hora da sync diária" field="sync_hora" placeholder="02:00"
+              value={config.sync_hora} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
           </div>
+          {/* CORRIGIDO 20/07/2026: este campo, quando preenchido, limita TODAS as
+              sincronizações (Artigos, Vendas, Compras, Arquivo Digital) a nunca
+              trazerem nada depois desta data — silenciosamente, sem nenhum aviso.
+              Já aconteceu ficar esquecido com uma data antiga, fazendo parecer que a
+              sincronização "não fazia nada" quando na realidade estava só a ignorar
+              tudo o que fosse mais recente do que esta data. */}
+          {config.sync_data_fim && (
+            <p className="text-xs text-amber-600 mt-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              ⚠️ Com este campo preenchido, a sincronização <strong>nunca vai importar nada depois de {config.sync_data_fim}</strong>,
+              mesmo que existam documentos mais recentes no WinMax4. Deixa vazio para sincronizar sempre até hoje.
+            </p>
+          )}
         </div>
       </div>
 
