@@ -64,9 +64,9 @@ async function irParaPaginaToolbox(page: Page, paginaAlvo: number): Promise<void
   }
 }
 
-async function exportarSAFT(page: Page, dataInicio: string, dataFim: string): Promise<string> {
+async function exportarSAFT(page: Page, dataInicio: string, dataFim: string, log?: (msg: string) => Promise<void> | void): Promise<string> {
   // Procura "Exportar ficheiro SAF-T" pelo título — robusto a mudanças de página/índice
-  const found = await clicarToolboxPorTitulo(page, 'SAF-T')
+  const found = await clicarToolboxPorTitulo(page, 'SAF-T', 11, log)
   if (!found) throw new Error('Atalho SAF-T não encontrado no Toolbox')
   await page.waitForTimeout(2000)
   await page.waitForFunction(
@@ -318,7 +318,7 @@ export async function syncSAFT(
     await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 60000 })
     await log('✅ Login OK')
 
-    const nomeFicheiro = await exportarSAFT(page, di, df)
+    const nomeFicheiro = await exportarSAFT(page, di, df, log)
     await log(`📥 SAF-T exportado: ${nomeFicheiro}`)
 
     // Usa o URL capturado dentro do exportarSAFT (window.__saftDownloadUrl)

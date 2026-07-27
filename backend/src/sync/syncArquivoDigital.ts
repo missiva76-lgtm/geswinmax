@@ -49,9 +49,9 @@ function parseFicheiro(ficheiro: string): { tipo: string; numero: string; ano: s
   return { tipo, numero: num, ano }
 }
 
-async function abrirArquivoDigital(page: Page): Promise<void> {
+async function abrirArquivoDigital(page: Page, log?: (msg: string) => Promise<void> | void): Promise<void> {
   // Procura "Arquivo digital" pelo título — robusto a mudanças de página/índice
-  const found = await clicarToolboxPorTitulo(page, 'Arquivo digital')
+  const found = await clicarToolboxPorTitulo(page, 'Arquivo digital', 11, log)
   if (!found) throw new Error('Atalho "Arquivo digital" não encontrado no Toolbox')
   await page.waitForTimeout(2000)
   await page.waitForFunction(
@@ -248,7 +248,7 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     await page.waitForTimeout(2000)
     await log('✅ Login OK')
 
-    await abrirArquivoDigital(page)
+    await abrirArquivoDigital(page, log)
     await log('📂 Arquivo Digital aberto')
 
     await abrirDetalhesDocumentos(page)
