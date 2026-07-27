@@ -9,12 +9,30 @@ export async function clicarToolboxPorTitulo(
   maxPaginas = 11,
   log?: (msg: string) => Promise<void> | void
 ): Promise<boolean> {
+  // CORRIGIDO 27/07/2026: confirmado em produção que todas as páginas do Toolbox
+  // apareciam "vazias" na pesquisa — não porque o atalho não existisse, mas porque
+  // o Toolbox ainda não tinha acabado de desenhar os ícones quando a pesquisa
+  // começou (o CPU deste serviço é muito limitado — 0.15 vCPU — o que torna a
+  // renderização lenta). O winmaxRPA.ts já tinha exatamente esta espera antes de
+  // usar o Toolbox (para a emissão de faturas), mas nunca tinha sido replicada
+  // aqui, usada pelos syncs de Arquivo Digital e SAF-T.
+  await page.waitForFunction(
+    () => {
+      const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
+      const doc = tb?.contentDocument
+      return !!(doc && doc.readyState === 'complete' &&
+        doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
+    },
+    { timeout: 60000, polling: 500 }
+  ).catch(() => {})
+
+  // Garante que começa na página 1 do Toolbox.
   // CORRIGIDO 27/07/2026: este bloco disparava vários cliques em "página anterior"
   // TODOS dentro do mesmo page.evaluate(), sem esperar nada entre eles. Como cada
   // clique dispara um postback ASP.NET (não instantâneo), cliques em sequência tão
   // rápida provavelmente só têm um efeito real — deixando o Toolbox numa página
   // imprevisível, não necessariamente a página 1. Isso fazia a pesquisa seguinte
-  // (que already navega corretamente, um clique de cada vez) começar de uma base
+  // (que já navega corretamente, um clique de cada vez) começar de uma base
   // errada, podendo nunca alcançar a página onde está o atalho procurado.
   // Agora clica uma vez de cada vez, esperando e reavaliando entre cada clique —
   // igual ao padrão já usado (e comprovado) no loop de pesquisa abaixo.
