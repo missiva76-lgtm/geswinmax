@@ -91,6 +91,12 @@ export default function Arquivo() {
       if (n > 120) { setSyncing(false); pesquisar(q); return }
       const job = await fetch(`${API}/jobs/${jobId}`).then(res => res.json()).catch(() => null)
       if (job?.log) setSyncLog(job.log)
+      if (job?.estado === 'erro' && job?.erro_geral) {
+        // Proteção adicional: mesmo que o log do job não tenha o erro (ex: falha
+        // antes do sync sequer começar a escrever log), o estado do job guarda-o
+        // separadamente em erro_geral — mostra-o também.
+        setSyncLog(l => l.some(x => x.includes(job.erro_geral)) ? l : [...l, `❌ ${job.erro_geral}`])
+      }
       if (job?.estado === 'concluido' || job?.estado === 'erro') {
         setSyncing(false)
         pesquisar(q)

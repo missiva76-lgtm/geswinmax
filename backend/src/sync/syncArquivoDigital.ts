@@ -347,6 +347,12 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     await log(`✅ Arquivo Digital: ${totalImportados} documentos importados`)
 
   } catch (err) {
+    // CORRIGIDO 27/07/2026: o erro só era registado no log do servidor (invisível
+    // para o utilizador) e na coleção sync_log — nunca no log do próprio job, que é
+    // o que a interface mostra. Isto fazia o processo parecer "preso" sem explicação
+    // quando falhava (confirmado em produção: log parava logo a seguir a "Login OK",
+    // sem nenhuma indicação do que correu mal).
+    await log(`❌ Erro: ${err}`)
     logger.error(`❌ Sync Arquivo Digital: ${err}`)
     await db().collection('sync_log').add({
       tipo:  'arquivo_digital', erro: String(err),

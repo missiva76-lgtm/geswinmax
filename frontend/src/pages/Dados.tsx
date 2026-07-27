@@ -25,7 +25,7 @@ interface Movimento {
   total: number
   total_sem_iva?: number
   vendedor?: string
-  ultima_sync?: { seconds: number }
+  ultima_sync?: { seconds?: number; _seconds?: number }
 }
 
 interface ArticlePurchaseSale {
@@ -52,9 +52,15 @@ function exportarExcel(dados: Record<string, unknown>[], nomeTab: string) {
 
 const fmt = (n: number) => (n || 0).toFixed(2).replace('.', ',') + ' €'
 
-const fmtTs = (ts?: { seconds: number }) => {
-  if (!ts?.seconds) return null
-  return new Date(ts.seconds * 1000).toLocaleDateString('pt-PT', {
+// CORRIGIDO 27/07/2026: o Firestore (firebase-admin v13) serializa Timestamp como
+// {"_seconds": ..., "_nanoseconds": ...} — COM underscore — não {seconds, nanoseconds}
+// como se assumia. Isto fazia com que este campo nunca fosse lido (ficava sempre
+// undefined), e "Última sincronização" nunca aparecia. Aceita os dois formatos por
+// segurança, caso algum dado venha já normalizado de outra forma.
+const fmtTs = (ts?: { seconds?: number; _seconds?: number }) => {
+  const s = ts?.seconds ?? ts?._seconds
+  if (!s) return null
+  return new Date(s * 1000).toLocaleDateString('pt-PT', {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
   })
@@ -63,8 +69,8 @@ const fmtTs = (ts?: { seconds: number }) => {
 // Devolve a data do registo mais recentemente sincronizado numa lista (campo
 // ultima_sync gravado pelo backend em cada artigo/movimento), para o utilizador
 // perceber se os dados estão atualizados sem ter de adivinhar.
-const ultimaSyncDe = (lista: Array<{ ultima_sync?: { seconds: number } }>): string | null => {
-  const segundos = lista.map(x => x.ultima_sync?.seconds || 0).filter(Boolean)
+const ultimaSyncDe = (lista: Array<{ ultima_sync?: { seconds?: number; _seconds?: number } }>): string | null => {
+  const segundos = lista.map(x => x.ultima_sync?.seconds ?? x.ultima_sync?._seconds ?? 0).filter(Boolean)
   if (segundos.length === 0) return null
   return fmtTs({ seconds: Math.max(...segundos) })
 }

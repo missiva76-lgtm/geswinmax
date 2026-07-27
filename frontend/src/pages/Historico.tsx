@@ -15,8 +15,8 @@ interface FaturaEmitida {
   sucesso: boolean
   erro: string | null
   total?: number
-  emitido_em?: { seconds: number }
-  data_submissao?: { seconds: number }
+  emitido_em?: { seconds?: number; _seconds?: number }
+  data_submissao?: { seconds?: number; _seconds?: number }
 }
 
 type SortField = 'fatura_id' | 'emitido_em' | 'data_documento' | 'cliente_nome' | 'total' | 'sucesso'
@@ -32,9 +32,14 @@ const TIPO_COR: Record<string, string> = {
   GT:  'bg-yellow-100 text-yellow-700',
 }
 
-const fmtTs = (ts?: { seconds: number }) => {
-  if (!ts?.seconds) return '—'
-  return new Date(ts.seconds * 1000).toLocaleDateString('pt-PT', {
+// CORRIGIDO 27/07/2026: o Firestore (firebase-admin v13) serializa Timestamp como
+// {"_seconds": ..., "_nanoseconds": ...} — COM underscore. Esta função só lia
+// ".seconds" (sem underscore), pelo que as colunas "Data submissão" e "Data
+// documento" mostravam sempre "—", mesmo quando a data existia realmente.
+const fmtTs = (ts?: { seconds?: number; _seconds?: number }) => {
+  const s = ts?.seconds ?? ts?._seconds
+  if (!s) return '—'
+  return new Date(s * 1000).toLocaleDateString('pt-PT', {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
   })
@@ -102,7 +107,7 @@ export default function Historico() {
     let va: any, vb: any
     switch (sortField) {
       case 'fatura_id':      va = a.fatura_id; vb = b.fatura_id; break
-      case 'emitido_em':     va = a.emitido_em?.seconds ?? 0; vb = b.emitido_em?.seconds ?? 0; break
+      case 'emitido_em':     va = a.emitido_em?.seconds ?? a.emitido_em?._seconds ?? 0; vb = b.emitido_em?.seconds ?? b.emitido_em?._seconds ?? 0; break
       case 'data_documento': va = a.data_documento ?? ''; vb = b.data_documento ?? ''; break
       case 'cliente_nome':   va = a.cliente_nome ?? ''; vb = b.cliente_nome ?? ''; break
       case 'total':          va = a.total ?? 0; vb = b.total ?? 0; break
