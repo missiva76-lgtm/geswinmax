@@ -294,6 +294,15 @@ export async function syncSAFT(
     })
     const page = await context.newPage()
 
+    // CORRIGIDO 28/07/2026: mesma proteção já aplicada ao winmaxRPA.ts,
+    // syncArtigos.ts e syncArquivoDigital.ts — um diálogo nativo do browser
+    // (alert/confirm), sem handler registado, bloqueia a página inteira até ao
+    // timeout. Este ficheiro tinha ficado de fora por lapso.
+    page.on('dialog', async (dialog) => {
+      await log(`  🔔 Diálogo nativo do browser detetado: [${dialog.type()}] "${dialog.message()}" — a aceitar automaticamente`)
+      await dialog.accept().catch(() => {})
+    })
+
     // Login
 // Login WinMax4
     // O WinMax4 abre sempre no MainPage com um iframe de autenticação UserAuthentication_content

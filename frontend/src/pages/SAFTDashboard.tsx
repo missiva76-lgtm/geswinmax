@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { TrendingUp, Users, Package, Euro, RefreshCw, Calendar } from 'lucide-react'
 import { triggerSyncArquivo } from '../services/api'
 import ServerWakingBanner from '../components/ServerWakingBanner'
@@ -69,6 +69,16 @@ export default function SAFTDashboard() {
   const [dfInput, setDfInput]   = useState('')
   const [tab, setTab]           = useState<'vendas' | 'clientes' | 'artigos'>('vendas')
   const [serverError, setServerError] = useState<Error | null>(null)
+  const [syncLog, setSyncLog]   = useState<string[]>([])
+  const logRef                  = useRef<HTMLDivElement>(null)
+
+  // CORRIGIDO 28/07/2026: esta página nunca mostrava o log da importação — só
+  // "A importar..." sem detalhe nenhum. Foi exatamente esta cegueira que tornou
+  // o diagnóstico do Arquivo Digital tão demorado; sem ver o log real não há
+  // forma de saber onde o processo falha.
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [syncLog])
 
   useEffect(() => {
     Promise.all([
@@ -85,19 +95,39 @@ export default function SAFTDashboard() {
 
   const handleSync = async () => {
     setSyncing(true)
+    setSyncLog([])
     const r = await triggerSyncSAFT(diInput || undefined, dfInput || undefined).catch(() => null)
     const jobId = r?.jobId
     if (!jobId) {
       setSyncing(false)
+      setSyncLog(['❌ Não foi possível iniciar a importação — verifica a ligação ao servidor'])
       return
     }
-    // Faz polling do job até concluir (em vez de esperar tempo fixo)
+    // CORRIGIDO 28/07/2026: o limite era de ~2 minutos (40 tentativas), curto
+    // demais — a exportação SAF-T obriga o WinMax4 a gerar o ficheiro XML
+    // completo do período, o que demora bastante mais em períodos longos.
+    // Aumentado para ~10 minutos, e agora mostra o log real em vez de
+    // desaparecer em silêncio.
     const poll = async (tentativas = 0): Promise<void> => {
-      if (tentativas > 40) { setSyncing(false); return } // máx ~2min
+      if (tentativas > 200) {
+        setSyncing(false)
+        setSyncLog(l => [...l, '⚠️ A importação está a demorar mais de 10 minutos — verifica o Dashboard'])
+        return
+      }
       const job = await fetch(`${API}/jobs/${jobId}`).then(r => r.json()).catch(() => null)
+      if (job?.log) setSyncLog(job.log)
+      if (job?.estado === 'erro' && job?.erro_geral) {
+        setSyncLog(l => l.some(x => x.includes(job.erro_geral)) ? l : [...l, `❌ ${job.erro_geral}`])
+      }
       if (job?.estado === 'concluido' || job?.estado === 'erro') {
         setSyncing(false)
-        window.location.reload()
+        if (job?.estado === 'concluido') {
+          // Recarrega os dados sem perder o log que acabou de ser mostrado
+          Promise.all([
+            fetch(`${API}/saft`).then(r => r.json()).catch(() => []),
+            fetch(`${API}/saft/mensal`).then(r => r.json()).catch(() => []),
+          ]).then(([res, m]) => { setResumos(res); setMensal(m) })
+        }
         return
       }
       setTimeout(() => poll(tentativas + 1), 3000)
@@ -130,6 +160,22 @@ export default function SAFTDashboard() {
           </button>
         </div>
       </div>
+
+      {(syncing || syncLog.length > 0) && (
+        <div ref={logRef} className="mb-4 bg-gray-900 rounded-lg p-3 h-48 overflow-y-auto font-mono text-xs">
+          {syncing && syncLog.length === 0 && (
+            <div className="text-gray-300">A iniciar importação do SAF-T...</div>
+          )}
+          {syncLog.map((linha, i) => (
+            <div key={i} className={
+              linha.includes('❌') ? 'text-red-400' :
+              linha.includes('✅') ? 'text-green-400' :
+              linha.includes('⚠️') ? 'text-yellow-400' : 'text-gray-300'}>
+              {linha}
+            </div>
+          ))}
+        </div>
+      )}
 
       {loading && <p className="text-sm text-gray-400 text-center py-12">A carregar...</p>}
 
