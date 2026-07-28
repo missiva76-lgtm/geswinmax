@@ -21,6 +21,7 @@ export default defineConfig({
         display: 'standalone',
         start_url: '/',
         scope: '/',
+        id: '/',
         lang: 'pt',
         icons: [
           { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },

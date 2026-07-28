@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { FileSpreadsheet, LayoutDashboard, Package, Archive, Settings, LogOut, Menu, X, BarChart2, History } from 'lucide-react'
 const APP_VERSION = '202606291200'
 import { auth, signOut } from '../../services/firebase'
+import InstallPWA from '../InstallPWA'
 
 const nav = [
   { to: '/',             icon: LayoutDashboard, label: 'Dashboard' },
@@ -88,10 +89,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Conteúdo principal */}
       <main className="flex-1 md:ml-60 pt-14 md:pt-0 bg-gray-50">
-        <div className="max-w-6xl mx-auto px-4 py-6">
+        <div className="max-w-6xl mx-auto px-4 py-6 pb-24">
           {children}
         </div>
       </main>
+
+      <InstallPWA/>
     </div>
   )
 }
