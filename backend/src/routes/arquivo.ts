@@ -170,23 +170,39 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     })
     await page.waitForTimeout(3000)
 
-    // Procura a linha do ficheiro (pode haver mais do que uma página nesse dia)
+    // Procura a linha do ficheiro (pode haver mais do que uma página nesse dia).
+    // Vai recolhendo o que realmente vê em cada página — se não encontrar, a mensagem
+    // de erro mostra os ficheiros e o contador de páginas observados, para se perceber
+    // de imediato se o filtro de data se aplicou ou se a listagem ficou por filtrar.
     const downloadPromise = page.waitForEvent('download', { timeout: 60000 })
     let clicou = false
+    const vistos: string[] = []
+    let contadorPaginas = ''
+
     for (let pag = 0; pag < 20 && !clicou; pag++) {
-      clicou = await page.evaluate(({ nome }: { nome: string }) => {
+      const r = await page.evaluate(({ nome }: { nome: string }) => {
         const f    = document.getElementById('DigitalArchiveDetails_content') as HTMLIFrameElement
-        const grid = f?.contentDocument?.getElementById('wucFileList1_fileList') as HTMLTableElement
-        if (!grid) return false
+        const doc  = f?.contentDocument
+        const grid = doc?.getElementById('wucFileList1_fileList') as HTMLTableElement
+        const contador = (doc?.getElementById('wucFileList1_DIVModernPageCounter') as HTMLElement)?.innerText?.trim() || ''
+        if (!grid) return { clicou: false, nomes: [] as string[], contador, semGrelha: true }
+
+        const nomes: string[] = []
         for (const tr of Array.from(grid.querySelectorAll('tbody tr'))) {
-          const texto = (tr as HTMLElement).innerText || ''
-          if (!texto.includes(nome)) continue
-          const link = tr.querySelector('a[id*="lnkSelect"], a') as HTMLElement | null
-          if (link) { link.click(); return true }
+          const celulas = Array.from(tr.querySelectorAll('td')).map(td => (td as HTMLElement).innerText.trim())
+          const nomeFich = celulas.find(t => /\.pdf$/i.test(t)) || celulas[3] || ''
+          if (nomeFich) nomes.push(nomeFich)
+          if (nomeFich === nome || (tr as HTMLElement).innerText?.includes(nome)) {
+            const link = tr.querySelector('a[id*="lnkSelect"], a') as HTMLElement | null
+            if (link) { link.click(); return { clicou: true, nomes, contador, semGrelha: false } }
+          }
         }
-        return false
+        return { clicou: false, nomes, contador, semGrelha: false }
       }, { nome: ficheiro })
 
+      clicou = r.clicou
+      contadorPaginas = r.contador || contadorPaginas
+      for (const n of r.nomes) if (!vistos.includes(n)) vistos.push(n)
       if (clicou) break
 
       const avancou = await page.evaluate(() => {
@@ -200,7 +216,15 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
       await page.waitForTimeout(1500)
     }
 
-    if (!clicou) throw new Error(`o ficheiro "${ficheiro}" não foi encontrado na listagem de ${dataFiltro}`)
+    if (!clicou) {
+      const amostra = vistos.slice(0, 10).join(', ') || '(nenhum ficheiro visível na grelha)'
+      logger.error(`❌ Arquivo: "${ficheiro}" não encontrado após filtro ${dataFiltro}. Páginas: ${contadorPaginas || 'n/d'}. Vistos: ${amostra}`)
+      throw new Error(
+        `"${ficheiro}" não encontrado na listagem filtrada por ${dataFiltro}. ` +
+        `Contador de páginas: ${contadorPaginas || 'n/d'}. ` +
+        `Ficheiros que a listagem mostrou: ${amostra}`
+      )
+    }
 
     const download = await downloadPromise
 
