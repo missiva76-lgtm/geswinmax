@@ -64,6 +64,12 @@ export async function getFaturas(filtros?: { cliente?: string; sucesso?: boolean
   return res.json()
 }
 
+export async function limparHistorico(modo: 'erros' | 'tudo'): Promise<{ apagados: number; modo: string; completo: boolean }> {
+  const res = await fetchWithRetry(`${API}/faturas?modo=${modo}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 export async function getConfig() {
   try {
     const res = await fetchWithRetry(`${API}/config`)

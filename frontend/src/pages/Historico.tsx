@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Search, FileText, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react'
-import { getFaturas } from '../services/api'
+import { Search, FileText, RefreshCw, ChevronUp, ChevronDown, Loader2, Trash2, AlertTriangle } from 'lucide-react'
+import { getFaturas, limparHistorico } from '../services/api'
 import ServerWakingBanner from '../components/ServerWakingBanner'
 
 interface FaturaEmitida {
@@ -57,6 +57,59 @@ export default function Historico() {
   const [sortField, setSortField]   = useState<SortField>('emitido_em')
   const [sortDir, setSortDir]       = useState<SortDir>('desc')
   const [serverError, setServerError] = useState<Error | null>(null)
+  const [pdfEmCurso, setPdfEmCurso]   = useState<string | null>(null)
+  const [pdfErro, setPdfErro]         = useState<string | null>(null)
+  const [verLimpar, setVerLimpar]     = useState(false)
+  const [aLimpar, setALimpar]         = useState(false)
+  const [msgLimpeza, setMsgLimpeza]   = useState<string | null>(null)
+
+  const executarLimpeza = async (modo: 'erros' | 'tudo') => {
+    setALimpar(true)
+    setMsgLimpeza(null)
+    try {
+      const r = await limparHistorico(modo)
+      setMsgLimpeza(r.completo
+        ? `✅ ${r.apagados} registo(s) apagado(s)`
+        : `⚠️ ${r.apagados} registo(s) apagado(s), mas ainda restam alguns — volta a clicar para continuar`)
+      setVerLimpar(false)
+      carregar()
+    } catch (e: any) {
+      setMsgLimpeza(`❌ Falhou: ${e.message}`)
+    } finally {
+      setALimpar(false)
+    }
+  }
+
+  // CORRIGIDO 28/07/2026: era um link direto <a href target="_blank">. Como o PDF
+  // está no Firebase Storage (origem diferente do site), o browser IGNORA o atributo
+  // `download` em ligações de origem cruzada e limita-se a abrir o ficheiro numa aba
+  // — em vez de o guardar na pasta de transferências. É exatamente o mesmo problema
+  // que já tínhamos corrigido na página de Emissão: busca-se o ficheiro, cria-se um
+  // blob local, e a partir daí o download é tratado como qualquer outro.
+  const descarregarPDF = async (f: FaturaEmitida) => {
+    if (!f.pdf_url || pdfEmCurso) return
+    const chave = f.numero_documento || f.fatura_id || f.pdf_url
+    setPdfErro(null)
+    setPdfEmCurso(chave)
+    try {
+      const res = await fetch(f.pdf_url)
+      if (!res.ok) throw new Error(`o servidor respondeu ${res.status}`)
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const nome = `${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'documento').replace(/\//g, '_')}.pdf`
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = nome
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    } catch (e: any) {
+      setPdfErro(`Não foi possível descarregar o PDF — ${e.message}`)
+    } finally {
+      setPdfEmCurso(null)
+    }
+  }
 
   const carregar = async () => {
     setLoading(true)
@@ -129,11 +182,20 @@ export default function Historico() {
           <h2 className="text-lg font-semibold text-gray-900">Histórico de emissões</h2>
           <p className="text-sm text-gray-400">Documentos emitidos via GesWinmax</p>
         </div>
-        <button onClick={carregar}
-          className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5">
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''}/>
-          Atualizar
-        </button>
+        <div className="flex gap-2">
+          <button onClick={carregar}
+            className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5">
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''}/>
+            Atualizar
+          </button>
+          {faturas.length > 0 && (
+            <button onClick={() => { setMsgLimpeza(null); setVerLimpar(true) }}
+              className="flex items-center gap-2 text-sm text-red-500 hover:text-red-600 border border-red-200 hover:bg-red-50 rounded-lg px-3 py-1.5">
+              <Trash2 size={14}/>
+              Limpar histórico
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filtros */}
@@ -162,6 +224,69 @@ export default function Historico() {
       </div>
 
       {/* Resumo */}
+      {msgLimpeza && (
+        <div className={`mb-3 px-3 py-2 rounded-lg text-xs border flex items-start justify-between gap-3 ${
+          msgLimpeza.startsWith('✅')
+            ? 'bg-green-50 border-green-200 text-green-700'
+            : msgLimpeza.startsWith('⚠️')
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-red-50 border-red-200 text-red-700'}`}>
+          <span>{msgLimpeza}</span>
+          <button onClick={() => setMsgLimpeza(null)} className="opacity-60 hover:opacity-100 shrink-0">✕</button>
+        </div>
+      )}
+
+      {verLimpar && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onClick={() => !aLimpar && setVerLimpar(false)}>
+          <div className="bg-white rounded-xl max-w-md w-full p-5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-red-50 shrink-0">
+                <AlertTriangle size={18} className="text-red-500"/>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">Limpar histórico de emissões</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Esta ação é permanente e não pode ser anulada.</p>
+              </div>
+            </div>
+
+            <div className="mb-4 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+              <strong>Atenção:</strong> este histórico é também o que impede a emissão de faturas
+              duplicadas. Se apagares os registos com sucesso, reenviar o mesmo Excel volta a emitir
+              tudo de novo no WinMax4, sem aviso.
+            </div>
+
+            <div className="space-y-2">
+              <button onClick={() => executarLimpeza('erros')} disabled={aLimpar}
+                className="w-full text-left px-3 py-2.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
+                <p className="text-sm font-medium text-gray-800">Limpar apenas os registos com erro</p>
+                <p className="text-xs text-gray-500 mt-0.5">Recomendado — mantém a proteção contra duplicados</p>
+              </button>
+
+              <button onClick={() => executarLimpeza('tudo')} disabled={aLimpar}
+                className="w-full text-left px-3 py-2.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 disabled:opacity-50">
+                <p className="text-sm font-medium text-red-700">Limpar tudo</p>
+                <p className="text-xs text-red-600 mt-0.5">Apaga também os emitidos com sucesso e a proteção contra duplicados</p>
+              </button>
+            </div>
+
+            <div className="flex justify-end mt-4">
+              <button onClick={() => setVerLimpar(false)} disabled={aLimpar}
+                className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 disabled:opacity-50">
+                {aLimpar ? 'A apagar...' : 'Cancelar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pdfErro && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start justify-between gap-3">
+          <span>{pdfErro}</span>
+          <button onClick={() => setPdfErro(null)} className="text-red-400 hover:text-red-600 shrink-0">✕</button>
+        </div>
+      )}
+
       <div className="flex gap-4 mb-4 text-sm text-gray-500 flex-wrap">
         <span>{filtradas.length} registos</span>
         <span className="text-green-600">✓ {emitidas} emitidos</span>
@@ -187,7 +312,7 @@ export default function Historico() {
                 <Th label="Data submissão"  field="emitido_em"/>
                 <Th label="Data documento"  field="data_documento"/>
                 <Th label="Cliente"         field="cliente_nome"/>
-                <Th label="Total c/IVA"     field="total" right/>
+                <Th label="Total s/IVA"     field="total" right/>
                 <Th label="Estado"          field="sucesso"/>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">PDF</th>
               </tr>
@@ -218,10 +343,13 @@ export default function Historico() {
                   </td>
                   <td className="px-4 py-3">
                     {f.pdf_url
-                      ? <a href={f.pdf_url} target="_blank" rel="noreferrer"
-                          className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs">
-                          <FileText size={12}/> PDF
-                        </a>
+                      ? <button onClick={() => descarregarPDF(f)}
+                          disabled={pdfEmCurso !== null}
+                          className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs disabled:opacity-40 disabled:cursor-wait">
+                          {pdfEmCurso === (f.numero_documento || f.fatura_id || f.pdf_url)
+                            ? <><Loader2 size={12} className="animate-spin"/> ...</>
+                            : <><FileText size={12}/> PDF</>}
+                        </button>
                       : <span className="text-gray-300 text-xs">—</span>
                     }
                   </td>
