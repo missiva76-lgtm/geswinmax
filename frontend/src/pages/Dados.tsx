@@ -283,12 +283,12 @@ export default function Dados() {
     })), 'artigos')
     else if (tab === 'vendas') exportarExcel(vendasFiltradas.map(v => ({
       'Data': v.data, 'Nº Doc.': v.numero_doc, 'Família': v.familia || '',
-      'Artigo': v.artigo_descricao || v.artigo_codigo || '', 'Cliente': v.cliente_nome || '',
+      'Cód. Artigo': v.artigo_codigo || '', 'Artigo': v.artigo_descricao || '', 'Cliente': v.cliente_nome || '',
       'Qtd.': v.quantidade || '', 'Total S/IVA (€)': v.total_sem_iva || 0, 'Total C/IVA (€)': v.total,
     })), 'movimentos_venda')
     else if (tab === 'compras') exportarExcel(comprasFiltradas.map(c => ({
       'Data': c.data, 'Nº Doc.': c.numero_doc, 'Família': c.familia || '',
-      'Fornecedor': c.fornecedor_nome || '', 'Artigo': c.artigo_descricao || c.artigo_codigo || '',
+      'Fornecedor': c.fornecedor_nome || '', 'Cód. Artigo': c.artigo_codigo || '', 'Artigo': c.artigo_descricao || '',
       'Qtd.': c.quantidade || '', 'Total S/IVA (€)': c.total_sem_iva || 0, 'Total C/IVA (€)': c.total,
     })), 'movimentos_compra')
     else exportarExcel(resumoCalculado.map(r => ({
@@ -456,6 +456,7 @@ export default function Dados() {
                 <SortTh label="Data" field="data" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Nº Doc." field="numero_doc" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Família" field="familia" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
+                <SortTh label="Cód. Artigo" field="artigo_codigo" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Artigo" field="artigo_descricao" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Cliente" field="cliente_nome" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Qtd." field="quantidade" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-right"/>
@@ -464,14 +465,15 @@ export default function Dados() {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
-              {!loading && vendasFiltradas.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos.</td></tr>}
+              {loading && <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
+              {!loading && vendasFiltradas.length === 0 && <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos.</td></tr>}
               {paginate(vendasFiltradas).map((v, i) => (
                 <tr key={v.id || i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2 text-xs text-gray-600">{v.data}</td>
                   <td className="px-4 py-2 font-mono text-xs text-gray-700">{v.numero_doc}</td>
                   <td className="px-4 py-2 text-xs text-gray-500">{v.familia || '—'}</td>
-                  <td className="px-4 py-2 text-xs text-gray-700">{v.artigo_descricao || v.artigo_codigo}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-700">{v.artigo_codigo || '—'}</td>
+                  <td className="px-4 py-2 text-xs text-gray-700">{v.artigo_descricao || '—'}</td>
                   <td className="px-4 py-2 text-xs text-gray-700">{v.cliente_nome || v.cliente_codigo || '—'}</td>
                   <td className="px-4 py-2 text-right text-xs text-gray-600">{v.quantidade || '—'}</td>
                   <td className="px-4 py-2 text-right text-xs text-gray-500">{fmt(v.total_sem_iva || 0)}</td>
@@ -496,6 +498,7 @@ export default function Dados() {
                 <SortTh label="Nº Doc." field="numero_doc" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Família" field="familia" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Fornecedor" field="fornecedor_nome" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
+                <SortTh label="Cód. Artigo" field="artigo_codigo" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Artigo" field="artigo_descricao" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-left"/>
                 <SortTh label="Qtd." field="quantidade" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-right"/>
                 <SortTh label="Total S/IVA" field="total_sem_iva" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="text-right"/>
@@ -503,15 +506,16 @@ export default function Dados() {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
-              {!loading && comprasFiltradas.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos.</td></tr>}
+              {loading && <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>}
+              {!loading && comprasFiltradas.length === 0 && <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-400">Sem movimentos.</td></tr>}
               {paginate(comprasFiltradas).map((c, i) => (
                 <tr key={c.id || i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2 text-xs text-gray-600">{c.data}</td>
                   <td className="px-4 py-2 font-mono text-xs text-gray-700">{c.numero_doc}</td>
                   <td className="px-4 py-2 text-xs text-gray-500">{c.familia || '—'}</td>
                   <td className="px-4 py-2 text-xs text-gray-700">{c.fornecedor_nome || c.fornecedor_codigo || '—'}</td>
-                  <td className="px-4 py-2 text-xs text-gray-700">{c.artigo_descricao || c.artigo_codigo}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-700">{c.artigo_codigo || '—'}</td>
+                  <td className="px-4 py-2 text-xs text-gray-700">{c.artigo_descricao || '—'}</td>
                   <td className="px-4 py-2 text-right text-xs text-gray-600">{c.quantidade || '—'}</td>
                   <td className="px-4 py-2 text-right text-xs text-gray-500">{fmt(c.total_sem_iva || 0)}</td>
                   <td className="px-4 py-2 text-right text-xs font-medium text-gray-800">{fmt(c.total)}</td>
