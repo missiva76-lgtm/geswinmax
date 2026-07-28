@@ -141,10 +141,19 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     const buffer = Buffer.from(await resp.arrayBuffer())
 
     // Se vier HTML em vez de PDF, quase de certeza que a sessão não ficou válida e
-    // o WinMax4 devolveu a página de login — vale a pena dizê-lo explicitamente em
-    // vez de entregar um "PDF" corrompido ao utilizador.
+    // o WinMax4 devolveu a página de login — ou o endereço do ficheiro está errado.
+    // Capturamos um excerto da resposta real para se poder distinguir os dois casos,
+    // em vez de ficar só a saber que "não é um PDF".
     if (tipoConteudo.includes('text/html') || buffer.subarray(0, 4).toString() !== '%PDF') {
-      throw new Error('a resposta do WinMax4 não é um PDF válido (a sessão pode não estar autenticada)')
+      const excerto = buffer.toString('utf8', 0, 800)
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 400)
+      logger.error(`❌ Arquivo: resposta não-PDF para "${ficheiro}" (content-type: ${tipoConteudo}, ${buffer.length} bytes). Excerto: ${excerto}`)
+      throw new Error(
+        `a resposta do WinMax4 não é um PDF (content-type: ${tipoConteudo || 'desconhecido'}, ${buffer.length} bytes). ` +
+        `Resposta recebida: ${excerto || '(vazia)'}`
+      )
     }
 
     const os      = await import('os')
@@ -184,6 +193,96 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
         </body></html>
       `)
     }
+  } finally {
+    if (browser) await browser.close().catch(() => {})
+    releaseLock?.()
+  }
+})
+
+// GET /api/arquivo/diagnostico — inspeciona a listagem real do Arquivo Digital e
+// devolve o HTML de uma linha, para se perceber COMO o WinMax4 liga aos ficheiros.
+//
+// Existe porque o endereço usado no download (`DigitalArchiveFileHandler.aspx?file=`)
+// nunca foi confirmado a partir da aplicação — foi construído por suposição. Este
+// endpoint mostra o mecanismo verdadeiro (href, onclick, ids) em vez de adivinharmos.
+router.get('/diagnostico', async (_req: Request, res: Response) => {
+  const { chromium } = await import('playwright')
+  const { getConfig } = await import('../services/firebase')
+  const { acquireBrowserLock } = await import('../services/browserLock')
+  const { clicarToolboxPorTitulo } = await import('../rpa/toolboxHelper')
+  let browser: any = null
+  let releaseLock: (() => void) | null = null
+  try {
+    const config  = await getConfig()
+    const baseUrl = config.winmax_url || 'https://app102.winmax4.com'
+    const company = config.company_code || 'AUTOAVENIDA'
+
+    releaseLock = await acquireBrowserLock()
+    browser = await chromium.launch({ headless: true, args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] })
+    const context = await browser.newContext()
+    const page    = await context.newPage()
+
+    await page.goto(`${baseUrl}/MainPage.aspx?CompanyCode=${company}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await page.waitForTimeout(2000)
+    await page.waitForFunction(() => !!document.getElementById('UserAuthentication_content'), { timeout: 60000 })
+    await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
+      const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      const doc = f?.contentDocument
+      const u = doc?.getElementById('txtUserLogin')   as HTMLInputElement
+      const p = doc?.getElementById('txtUserPassword') as HTMLInputElement
+      if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
+      if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
+    }, { user: config.utilizador || '', pass: config.password || '' })
+    await page.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+    })
+    await page.waitForTimeout(3000)
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 })
+
+    const encontrou = await clicarToolboxPorTitulo(page, 'Arquivo digital')
+    if (!encontrou) throw new Error('Atalho "Arquivo digital" não encontrado no Toolbox')
+    await page.waitForTimeout(3000)
+    await page.waitForFunction(() => !!document.getElementById('utilsDigitalArchive_content'), { timeout: 60000 })
+
+    // Abre a categoria "Documentos" e espera pela grelha
+    await page.evaluate(() => {
+      const f = document.getElementById('utilsDigitalArchive_content') as HTMLIFrameElement
+      const doc = f?.contentDocument
+      const botoes = Array.from(doc?.querySelectorAll('input[type="image"], a, td') || [])
+      const alvo = botoes.find(b => (b as HTMLElement).innerText?.includes('Documentos')
+        || b.getAttribute('title')?.includes('Documentos')) as HTMLElement | undefined
+      alvo?.click()
+    }).catch(() => {})
+    await page.waitForTimeout(4000)
+
+    // Devolve o HTML bruto da primeira linha da grelha, para se ver o mecanismo real
+    const info = await page.evaluate(() => {
+      const procurarGrelha = (): { origem: string; html: string } | null => {
+        for (const idIframe of ['DigitalArchiveDetails_content', 'utilsDigitalArchive_content']) {
+          const f = document.getElementById(idIframe) as HTMLIFrameElement
+          const doc = f?.contentDocument
+          if (!doc) continue
+          const grid = doc.getElementById('wucFileList1_fileList') as HTMLTableElement
+          const linha = grid?.querySelector('tbody tr')
+          if (linha) return { origem: idIframe, html: linha.outerHTML }
+          // Se não há grelha, devolve o esqueleto do iframe para se perceber o estado
+          if (doc.body) return { origem: `${idIframe} (sem grelha)`, html: doc.body.innerHTML.slice(0, 3000) }
+        }
+        return null
+      }
+      return procurarGrelha()
+    })
+
+    res.json({
+      encontrado: !!info,
+      origem: info?.origem || null,
+      html: info?.html || null,
+      nota: 'Procura aqui por href, onclick ou __doPostBack — é isso que revela como o WinMax4 abre cada ficheiro.',
+    })
+  } catch (err) {
+    logger.error(`❌ Diagnóstico do arquivo falhou: ${err}`)
+    res.status(500).json({ erro: String(err) })
   } finally {
     if (browser) await browser.close().catch(() => {})
     releaseLock?.()
