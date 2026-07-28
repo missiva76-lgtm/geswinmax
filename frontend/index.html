@@ -16,6 +16,20 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="apple-mobile-web-app-title" content="GesWinmax"/>
   <link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
+
+  <!-- CORRIGIDO 28/07/2026: o evento 'beforeinstallprompt' dispara muito cedo,
+       normalmente antes de o React montar os componentes. Se só o ouvirmos dentro
+       de um componente React, o evento já passou e perde-se — e o botão de
+       instalação nunca fica disponível. Este script corre antes de tudo o resto,
+       guarda o evento em window, e avisa a app quando ela estiver pronta. -->
+  <script>
+    window.__pwaInstallPrompt = null;
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      window.__pwaInstallPrompt = e;
+      window.dispatchEvent(new Event('pwa-install-available'));
+    });
+  </script>
 </head>
 <body>
   <div id="root"></div>

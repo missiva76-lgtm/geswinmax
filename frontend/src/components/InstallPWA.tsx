@@ -39,15 +39,32 @@ export default function InstallPWA() {
       if (sessionStorage.getItem(DISPENSADO_KEY) === '1') setDispensado(true)
     } catch { /* sessionStorage pode estar bloqueado — segue sem isto */ }
 
+    // CORRIGIDO 28/07/2026: o evento 'beforeinstallprompt' dispara antes do React
+    // montar, por isso é capturado por um script no index.html e guardado em
+    // window.__pwaInstallPrompt. Aqui lemos o que já foi capturado, e ficamos
+    // também à escuta caso ainda venha a disparar.
+    const jaCapturado = (window as any).__pwaInstallPrompt as BeforeInstallPromptEvent | null
+    if (jaCapturado) setPromptEvent(jaCapturado)
+
+    const onDisponivel = () => {
+      const ev = (window as any).__pwaInstallPrompt as BeforeInstallPromptEvent | null
+      if (ev) setPromptEvent(ev)
+    }
     const onBeforeInstall = (e: Event) => {
-      e.preventDefault() // impede o banner automático, para usarmos o nosso botão
+      e.preventDefault()
       setPromptEvent(e as BeforeInstallPromptEvent)
     }
-    const onInstalled = () => { setInstalada(true); setPromptEvent(null) }
+    const onInstalled = () => {
+      setInstalada(true)
+      setPromptEvent(null)
+      ;(window as any).__pwaInstallPrompt = null
+    }
 
+    window.addEventListener('pwa-install-available', onDisponivel)
     window.addEventListener('beforeinstallprompt', onBeforeInstall)
     window.addEventListener('appinstalled', onInstalled)
     return () => {
+      window.removeEventListener('pwa-install-available', onDisponivel)
       window.removeEventListener('beforeinstallprompt', onBeforeInstall)
       window.removeEventListener('appinstalled', onInstalled)
     }
@@ -59,6 +76,7 @@ export default function InstallPWA() {
     const escolha = await promptEvent.userChoice.catch(() => ({ outcome: 'dismissed' as const }))
     if (escolha.outcome === 'accepted') setInstalada(true)
     setPromptEvent(null)
+    ;(window as any).__pwaInstallPrompt = null
   }
 
   const dispensar = () => {
@@ -110,7 +128,7 @@ export default function InstallPWA() {
             <div className="space-y-3 text-xs text-gray-600">
               <div>
                 <p className="font-medium text-gray-700 mb-1">Android (Chrome)</p>
-                <p>Toca no menu <strong>⋮</strong> (canto superior direito) e escolhe <strong>&quot;Adicionar ao ecrã principal&quot;</strong> ou <strong>&quot;Instalar aplicação&quot;</strong>.</p>
+                <p>Toca no menu <strong>⋮</strong> e faz <strong>scroll até ao fim da lista</strong> — a opção costuma estar lá no fundo, com o nome <strong>&quot;Instalar e criar um atalho&quot;</strong> ou <strong>&quot;Adicionar ao ecrã principal&quot;</strong>.</p>
               </div>
               <div>
                 <p className="font-medium text-gray-700 mb-1 flex items-center gap-1">iPhone / iPad (Safari) <Share size={12}/></p>
