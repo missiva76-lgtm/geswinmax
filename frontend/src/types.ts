@@ -1,10 +1,12 @@
 export interface Job {
   id: string
-  tipo: 'emissao' | 'sync' | 'arquivo'
+  tipo: 'emissao' | 'sync' | 'arquivo' | 'saft'
   estado: 'pendente' | 'ativo' | 'concluido' | 'erro'
   progresso: number
   log: string[]
   criado_em: { seconds: number }
+  erro_geral?: string
+  concluido_em?: { seconds?: number; _seconds?: number }
   resultado?: {
     total: number
     emitidas: number

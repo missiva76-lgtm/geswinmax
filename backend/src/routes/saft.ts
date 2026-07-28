@@ -31,9 +31,16 @@ router.post('/sync', async (req: Request, res: Response) => {
     criado_em: admin.firestore.FieldValue.serverTimestamp(),
   })
 
+  // Ver nota em routes/jobs.ts sobre `concluido_em`.
   syncSAFT(dataInicio, dataFim, jobRef.id)
-    .then(() => jobRef.update({ estado: 'concluido', progresso: 100 }))
-    .catch(async (e) => jobRef.update({ estado: 'erro', erro_geral: String(e) }))
+    .then(() => jobRef.update({
+      estado: 'concluido', progresso: 100,
+      concluido_em: admin.firestore.FieldValue.serverTimestamp(),
+    }))
+    .catch(async (e) => jobRef.update({
+      estado: 'erro', erro_geral: String(e),
+      concluido_em: admin.firestore.FieldValue.serverTimestamp(),
+    }))
 
   res.json({ jobId: jobRef.id, mensagem: 'Importação SAF-T iniciada' })
 })

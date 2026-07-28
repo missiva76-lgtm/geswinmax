@@ -69,9 +69,18 @@ router.post('/sync', async (req: Request, res: Response) => {
     progresso: 0, log: [],
     criado_em: admin.firestore.FieldValue.serverTimestamp(),
   })
+  // CORRIGIDO 28/07/2026: `concluido_em` só era gravado nas emissões, nunca nas
+  // sincronizações — pelo que o Dashboard não tinha forma de saber QUANDO uma
+  // sincronização terminou (só quando arrancou). Passa a ser registado aqui.
   syncWinmax(jobId, { forceCompleto })
-    .then(() => updateJob(jobId, { estado: 'concluido', progresso: 100 }))
-    .catch(async (e) => updateJob(jobId, { estado: 'erro', erro_geral: String(e) }))
+    .then(() => updateJob(jobId, {
+      estado: 'concluido', progresso: 100,
+      concluido_em: admin.firestore.FieldValue.serverTimestamp(),
+    }))
+    .catch(async (e) => updateJob(jobId, {
+      estado: 'erro', erro_geral: String(e),
+      concluido_em: admin.firestore.FieldValue.serverTimestamp(),
+    }))
   res.json({ jobId, mensagem: forceCompleto ? 'Sync COMPLETO iniciada' : 'Sync iniciada' })
 })
 
