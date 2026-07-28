@@ -197,7 +197,7 @@ export default function Configuracoes() {
 
         {/* Tipos de Documento */}
         <div className="bg-white border border-gray-100 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
             <p className="text-sm font-medium text-gray-700">Tipos de documento</p>
             <button onClick={() => setAdicionando(true)}
               className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700">

@@ -61,7 +61,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex-1 overflow-auto p-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
           <h2 className="text-2xl font-bold text-gray-800 uppercase tracking-wide">Dashboard</h2>
           <p className="text-sm text-gray-400 mt-0.5">GesWinmax — AUTOAVENIDA</p>
@@ -90,7 +90,7 @@ export default function Dashboard() {
       </div>
 
       {/* Módulos */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {[
           { label: 'Dados WinMax4', icon: Database, valor: modulos.artigos > 0 ? `${modulos.artigos} artigos` : '—', ok: modulos.artigos > 0, cor: '#7c3aed' },
           { label: 'Arquivo Digital', icon: Archive, valor: modulos.arquivo > 0 ? `${modulos.arquivo} docs` : '—', ok: modulos.arquivo > 0, cor: '#2563eb' },

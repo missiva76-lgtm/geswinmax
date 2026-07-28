@@ -88,7 +88,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Conteúdo principal */}
-      <main className="flex-1 md:ml-60 pt-14 md:pt-0 bg-gray-50">
+      {/* CORRIGIDO 28/07/2026: `min-w-0` é essencial. Um item flex com `flex-1`
+          tem `min-width: auto` por omissão, o que o impede de encolher abaixo da
+          largura do seu conteúdo. Sem isto, uma tabela larga estica o <main> e
+          arrasta a página inteira para lá da largura do ecrã — e o
+          `overflow-x-auto` das tabelas nunca chega a atuar, porque o problema
+          está no antecessor, não nelas. */}
+      <main className="flex-1 min-w-0 md:ml-60 pt-14 md:pt-0 bg-gray-50">
         <div className="max-w-6xl mx-auto px-4 py-6 pb-24">
           {children}
         </div>

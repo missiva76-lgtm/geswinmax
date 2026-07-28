@@ -141,12 +141,12 @@ export default function SAFTDashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">SAF-T</h2>
           <p className="text-sm text-gray-400">Indicadores fiscais e de vendas</p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           <input type="text" placeholder="01/01/2026" value={diInput}
             onChange={e => setDiInput(e.target.value)}
             className="w-24 px-2 py-1.5 text-xs border border-gray-200 rounded-lg"/>
@@ -226,7 +226,7 @@ export default function SAFTDashboard() {
           )}
 
           {/* Tabs: Detalhes */}
-          <div className="flex gap-1.5 mb-3">
+          <div className="flex gap-1.5 mb-3 flex-wrap">
             {([
               { id: 'vendas',    label: 'Vendas por mês' },
               { id: 'clientes',  label: 'Top clientes' },

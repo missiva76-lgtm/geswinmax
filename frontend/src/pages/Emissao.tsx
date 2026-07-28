@@ -164,7 +164,7 @@ export default function Emissao() {
           {/* Colunas do Excel */}
           <div className="mt-5 bg-white border border-gray-100 rounded-xl p-4">
             <p className="text-xs font-medium text-gray-500 mb-3 uppercase tracking-wide">Colunas do Excel</p>
-            <div className="grid grid-cols-2 gap-1.5 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
               {[
                 { col: 'fatura_id',      obrig: true,  desc: 'Identifica o documento (ex: F1, F2, F3...)' },
                 { col: 'cliente_codigo', obrig: true,  desc: 'Nº cliente WinMax4' },
@@ -236,7 +236,7 @@ export default function Emissao() {
                 style={{ width: `${job.progresso}%` }}/>
             </div>
             {job.resultado && (
-              <div className="flex gap-4 mt-2">
+              <div className="flex gap-4 mt-2 flex-wrap">
                 <span className="text-xs text-green-600">✓ {job.resultado.emitidas} emitidas</span>
                 {job.resultado.erros > 0 &&
                   <span className="text-xs text-red-500">✗ {job.resultado.erros} erros</span>}

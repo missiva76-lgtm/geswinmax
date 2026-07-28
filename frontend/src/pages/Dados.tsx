@@ -303,7 +303,7 @@ export default function Dados() {
     const tp = totalPages(total)
     if (tp <= 1) return null
     return (
-      <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-50 bg-gray-50">
+      <div className="flex items-center justify-between gap-2 flex-wrap px-4 py-2.5 border-t border-gray-50 bg-gray-50">
         <span className="text-xs text-gray-400">{total} registos — pág. {page} de {tp}</span>
         <div className="flex gap-1">
           <button onClick={() => setPage(1)} disabled={page===1} className="px-2 py-1 text-xs rounded border border-gray-200 disabled:opacity-40">«</button>
@@ -323,7 +323,7 @@ export default function Dados() {
   return (
     <div className="flex-1 overflow-auto p-6">
       <ServerWakingBanner error={serverError} onRetry={() => pesquisarArtigos(q)} />
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Dados WinMax4</h2>
           <p className="text-sm text-gray-400">Artigos, existências e movimentos sincronizados</p>

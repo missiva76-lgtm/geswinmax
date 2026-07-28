@@ -124,7 +124,7 @@ export default function Historico() {
     <div className="flex-1 overflow-auto p-6">
       <ServerWakingBanner error={serverError} onRetry={carregar} />
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Histórico de emissões</h2>
           <p className="text-sm text-gray-400">Documentos emitidos via GesWinmax</p>
@@ -162,7 +162,7 @@ export default function Historico() {
       </div>
 
       {/* Resumo */}
-      <div className="flex gap-4 mb-4 text-sm text-gray-500">
+      <div className="flex gap-4 mb-4 text-sm text-gray-500 flex-wrap">
         <span>{filtradas.length} registos</span>
         <span className="text-green-600">✓ {emitidas} emitidos</span>
         {comErro > 0 && <span className="text-red-500">✗ {comErro} com erro</span>}
