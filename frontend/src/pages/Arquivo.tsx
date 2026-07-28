@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, FileText, RefreshCw, Download } from 'lucide-react'
+import { Search, FileText, RefreshCw, Download, Loader2 } from 'lucide-react'
 import { getArquivo, triggerSyncArquivo, ServerWakingError } from '../services/api'
 import ServerWakingBanner from '../components/ServerWakingBanner'
 
@@ -37,6 +37,8 @@ export default function Arquivo() {
   const [loading, setLoading]   = useState(true)
   const [syncing, setSyncing]   = useState(false)
   const [syncLog, setSyncLog]   = useState<string[]>([])
+  const [pdfAFechar, setPdfAFechar] = useState<string | null>(null)
+  const [pdfErro, setPdfErro]       = useState<string | null>(null)
   const [serverError, setServerError] = useState<Error | null>(null)
   const searchRef               = useRef<ReturnType<typeof setTimeout>>()
   const logRef                  = useRef<HTMLDivElement>(null)
@@ -128,6 +130,32 @@ export default function Arquivo() {
     return `https://geswinmax-backend-8oo6.onrender.com/api/arquivo/download/${encodeURIComponent(ficheiro)}`
   }
 
+  // CORRIGIDO 28/07/2026: antes era um link direto que abria um separador em branco
+  // durante até um minuto (o backend tem de abrir o WinMax4 e autenticar-se para ir
+  // buscar o PDF), sem qualquer indicação de que estava a acontecer alguma coisa —
+  // parecia simplesmente que não funcionava. Agora busca-se o ficheiro com indicador
+  // de progresso na própria linha, e só se abre o separador quando já está pronto.
+  const abrirPDF = async (doc: DocArquivo) => {
+    if (pdfAFechar) return
+    const url = doc.pdf_url || pdfDownloadUrl(doc.ficheiro)
+    if (!url) return
+    setPdfErro(null)
+    setPdfAFechar(doc.id || doc.ficheiro)
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`o servidor respondeu ${res.status}`)
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      window.open(blobUrl, '_blank', 'noopener')
+      // Liberta a memória do blob passado algum tempo (o separador já o carregou)
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000)
+    } catch (e: any) {
+      setPdfErro(`Não foi possível obter ${doc.ficheiro} — ${e.message}`)
+    } finally {
+      setPdfAFechar(null)
+    }
+  }
+
   return (
     <div className="flex-1 overflow-auto p-6">
       <ServerWakingBanner error={serverError} onRetry={() => pesquisar(q)} />
@@ -189,6 +217,13 @@ export default function Arquivo() {
         )}
       </div>
 
+      {pdfErro && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start justify-between gap-3">
+          <span>{pdfErro}</span>
+          <button onClick={() => setPdfErro(null)} className="text-red-400 hover:text-red-600 shrink-0">✕</button>
+        </div>
+      )}
+
       {/* Tabela */}
       <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -231,11 +266,14 @@ export default function Arquivo() {
                   </td>
                   <td className="px-4 py-2.5 text-center">
                     {urlPDF ? (
-                      <a href={urlPDF} target="_blank" rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
-                        title="Ver PDF (pode demorar ~30-60s a carregar — requer login no WinMax4)">
-                        <FileText size={13}/> PDF
-                      </a>
+                      <button onClick={() => abrirPDF(doc)}
+                        disabled={pdfAFechar !== null}
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 disabled:opacity-40 disabled:cursor-wait"
+                        title="Ver PDF — pode demorar até 1 minuto (o servidor tem de autenticar-se no WinMax4)">
+                        {pdfAFechar === (doc.id || doc.ficheiro)
+                          ? <><Loader2 size={13} className="animate-spin"/> A obter...</>
+                          : <><FileText size={13}/> PDF</>}
+                      </button>
                     ) : (
                       <span className="text-gray-300 text-xs">—</span>
                     )}

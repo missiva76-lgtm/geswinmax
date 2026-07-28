@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import * as admin from 'firebase-admin'
 import { db } from '../services/firebase'
 import { syncArquivoDigital } from '../sync/syncArquivoDigital'
+import { logger } from '../services/logger'
 
 const router = Router()
 
@@ -62,8 +63,6 @@ router.post('/sync', async (req: Request, res: Response) => {
   res.json({ jobId: jobRef.id, mensagem: 'Importação do arquivo iniciada' })
 })
 
-export default router
-
 // GET /api/arquivo/pdf/:ficheiro — descarrega PDF do WinMax4 via proxy
 router.get('/pdf/:ficheiro', async (req: Request, res: Response) => {
   try {
@@ -83,12 +82,21 @@ router.get('/pdf/:ficheiro', async (req: Request, res: Response) => {
 router.get('/download/:ficheiro', async (req: Request, res: Response) => {
   const { chromium } = await import('playwright')
   const { getConfig } = await import('../services/firebase')
+  const { acquireBrowserLock } = await import('../services/browserLock')
   let browser: any = null
+  let releaseLock: (() => void) | null = null
+  let destino = ''
   try {
     const config  = await getConfig()
     const baseUrl = config.winmax_url || 'https://app102.winmax4.com'
     const company = config.company_code || 'AUTOAVENIDA'
     const ficheiro = decodeURIComponent(req.params.ficheiro)
+
+    // CORRIGIDO 28/07/2026: esta rota lançava um Chromium sem passar pelo semáforo,
+    // podendo correr em paralelo com uma sincronização. Com 512MB de RAM no Render,
+    // dois browsers em simultâneo são um risco real de esgotar a memória e derrubar
+    // ambos os processos. Agora fica em fila, tal como os syncs.
+    releaseLock = await acquireBrowserLock()
 
     // CORRIGIDO 27/07/2026: ver nota detalhada em syncArquivoDigital.ts — evita
     // crash do Chromium por falta de espaço em /dev/shm em containers.
@@ -124,17 +132,54 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     }, { url: baseUrl, file: ficheiro })
 
     const download = await downloadPromise
-    const path     = await download.path()
 
-    if (!path) throw new Error('Download falhou')
+    // CORRIGIDO 28/07/2026: antes fazia-se `res.sendFile(await download.path())` e o
+    // bloco `finally` fechava o browser logo a seguir. Como o sendFile é assíncrono,
+    // o browser fechava DURANTE o envio — e o Playwright apaga os ficheiros
+    // descarregados ao fechar, pelo que o PDF desaparecia a meio. Agora copia-se
+    // primeiro para um local nosso (que sobrevive ao fecho do browser), fecha-se o
+    // browser para libertar memória, e só depois se envia.
+    const os      = await import('os')
+    const pathMod = await import('path')
+    destino = pathMod.join(os.tmpdir(), `arquivo-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`)
+    await download.saveAs(destino)
 
+    await browser.close().catch(() => {})
+    browser = null
+    releaseLock?.()
+    releaseLock = null
+
+    const nomeSeguro = ficheiro.replace(/[^\w.\-]/g, '_')
     res.setHeader('Content-Type', 'application/pdf')
-    res.setHeader('Content-Disposition', `inline; filename="${ficheiro}"`)
+    res.setHeader('Content-Disposition', `inline; filename="${nomeSeguro}"`)
     const fs = await import('fs')
-    res.sendFile(path, () => { fs.rmSync(path, { force: true }) })
+    res.sendFile(destino, (err?: Error) => {
+      if (err) logger.error(`Erro ao enviar PDF ${ficheiro}: ${err}`)
+      fs.rmSync(destino, { force: true })
+    })
   } catch (err) {
-    res.status(500).json({ erro: String(err) })
+    logger.error(`❌ Download PDF do arquivo falhou: ${err}`)
+    if (destino) {
+      const fs = await import('fs')
+      fs.rmSync(destino, { force: true })
+    }
+    // Mensagem legível — este URL é aberto diretamente num separador do browser,
+    // por isso devolver JSON cru não ajuda nada quem está a ver.
+    if (!res.headersSent) {
+      res.status(500).type('html').send(`
+        <html lang="pt"><head><meta charset="utf-8"><title>Erro ao obter PDF</title></head>
+        <body style="font-family:system-ui,sans-serif;padding:2rem;color:#374151">
+          <h2 style="color:#dc2626">Não foi possível obter o PDF</h2>
+          <p>O documento não pôde ser descarregado do WinMax4.</p>
+          <p style="color:#6b7280;font-size:.9rem">Detalhe técnico: ${String(err).replace(/</g, '&lt;')}</p>
+          <p style="color:#6b7280;font-size:.9rem">Se houver uma sincronização a decorrer, tenta de novo quando terminar.</p>
+        </body></html>
+      `)
+    }
   } finally {
     if (browser) await browser.close().catch(() => {})
+    releaseLock?.()
   }
 })
+
+export default router
