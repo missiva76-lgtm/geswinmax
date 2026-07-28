@@ -123,44 +123,92 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     await page.waitForTimeout(3000)
     await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 }).catch(() => {})
 
-    // CORRIGIDO 28/07/2026: antes clicava-se num link e esperava-se pelo evento
-    // 'download' do Playwright (60s). Isso é frágil — se o Chromium decidir abrir o
-    // PDF no visualizador interno em vez de o descarregar, o evento NUNCA dispara e
-    // a rota rebenta por timeout (erro 500 observado em produção). Passa-se a usar a
-    // mesma abordagem que já funciona de forma fiável na emissão de faturas
-    // (winmaxRPA.ts): aproveitar os cookies da sessão já autenticada e ir buscar o
-    // ficheiro por HTTP direto, sem depender do comportamento do browser.
-    const cookies = await context.cookies()
-    const cookieHeader = cookies.map((c: any) => `${c.name}=${c.value}`).join('; ')
-    const urlFicheiro = `${baseUrl}/MTransactions/DigitalArchiveFileHandler.aspx?file=${encodeURIComponent(ficheiro)}`
+    // CORRIGIDO 28/07/2026: o endereço "DigitalArchiveFileHandler.aspx?file=..." que
+    // aqui se usava NUNCA foi confirmado a partir da aplicação — era uma suposição, e
+    // o WinMax4 respondia com 0 bytes. O mecanismo real está documentado no cabeçalho
+    // de syncArquivoDigital.ts, por quem explorou isto ao vivo:
+    //     "8. Download PDF: clica lnkSelect de cada linha → download interceptado"
+    // Ou seja: não há URL direto. É preciso navegar até à listagem, encontrar a linha
+    // do ficheiro e clicar no link dela, interceptando o download resultante.
+    //
+    // Para não percorrer as 200+ páginas da listagem, aproveita-se a data que já vem
+    // codificada no próprio nome do ficheiro (ex: 20260724_FFF_4749.pdf -> 24-07-2026)
+    // e aplica-se o filtro de data desse dia, reduzindo a poucos registos.
+    const m = ficheiro.match(/^(\d{4})(\d{2})(\d{2})_/)
+    if (!m) throw new Error(`não foi possível extrair a data do nome do ficheiro "${ficheiro}"`)
+    const dataFiltro = `${m[3]}-${m[2]}-${m[1]}`
 
-    const resp = await fetch(urlFicheiro, { headers: { Cookie: cookieHeader } })
-    if (!resp.ok) throw new Error(`o WinMax4 respondeu ${resp.status} ao pedir o ficheiro`)
+    // Toolbox -> Arquivo digital
+    const { clicarToolboxPorTitulo } = await import('../rpa/toolboxHelper')
+    const encontrouAtalho = await clicarToolboxPorTitulo(page, 'Arquivo digital')
+    if (!encontrouAtalho) throw new Error('atalho "Arquivo digital" não encontrado no Toolbox')
+    await page.waitForTimeout(2000)
+    await page.waitForFunction(() => !!document.getElementById('utilsDigitalArchive_content'), { timeout: 60000 })
 
-    const tipoConteudo = resp.headers.get('content-type') || ''
-    const buffer = Buffer.from(await resp.arrayBuffer())
+    // Categoria "Documentos"
+    await page.evaluate(() => {
+      const f = document.getElementById('utilsDigitalArchive_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('ibDetailsDocuments') as HTMLElement)?.click()
+    })
+    await page.waitForTimeout(2000)
+    await page.waitForFunction(() => !!document.getElementById('DigitalArchiveDetails_content'), { timeout: 30000 })
 
-    // Se vier HTML em vez de PDF, quase de certeza que a sessão não ficou válida e
-    // o WinMax4 devolveu a página de login — ou o endereço do ficheiro está errado.
-    // Capturamos um excerto da resposta real para se poder distinguir os dois casos,
-    // em vez de ficar só a saber que "não é um PDF".
-    if (tipoConteudo.includes('text/html') || buffer.subarray(0, 4).toString() !== '%PDF') {
-      const excerto = buffer.toString('utf8', 0, 800)
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 400)
-      logger.error(`❌ Arquivo: resposta não-PDF para "${ficheiro}" (content-type: ${tipoConteudo}, ${buffer.length} bytes). Excerto: ${excerto}`)
-      throw new Error(
-        `a resposta do WinMax4 não é um PDF (content-type: ${tipoConteudo || 'desconhecido'}, ${buffer.length} bytes). ` +
-        `Resposta recebida: ${excerto || '(vazia)'}`
-      )
+    // Filtro pela data do documento
+    await page.evaluate(({ d }: { d: string }) => {
+      const f   = document.getElementById('DigitalArchiveDetails_content') as HTMLIFrameElement
+      const doc = f?.contentDocument
+      if (!doc) return
+      const de  = doc.getElementById('FilterContentDate_txtFrom1_1') as HTMLInputElement
+      const ate = doc.getElementById('FilterContentDate_txtTo1_1')   as HTMLInputElement
+      if (de)  { de.value  = d; de.dispatchEvent(new Event('change', { bubbles: true })) }
+      if (ate) { ate.value = d; ate.dispatchEvent(new Event('change', { bubbles: true })) }
+    }, { d: dataFiltro })
+    await page.waitForTimeout(400)
+    await page.evaluate(() => {
+      const f = document.getElementById('DigitalArchiveDetails_content') as HTMLIFrameElement
+      ;(f?.contentDocument?.getElementById('wucFileList1_wucButtonFilter_linkButton1') as HTMLElement)?.click()
+    })
+    await page.waitForTimeout(3000)
+
+    // Procura a linha do ficheiro (pode haver mais do que uma página nesse dia)
+    const downloadPromise = page.waitForEvent('download', { timeout: 60000 })
+    let clicou = false
+    for (let pag = 0; pag < 20 && !clicou; pag++) {
+      clicou = await page.evaluate(({ nome }: { nome: string }) => {
+        const f    = document.getElementById('DigitalArchiveDetails_content') as HTMLIFrameElement
+        const grid = f?.contentDocument?.getElementById('wucFileList1_fileList') as HTMLTableElement
+        if (!grid) return false
+        for (const tr of Array.from(grid.querySelectorAll('tbody tr'))) {
+          const texto = (tr as HTMLElement).innerText || ''
+          if (!texto.includes(nome)) continue
+          const link = tr.querySelector('a[id*="lnkSelect"], a') as HTMLElement | null
+          if (link) { link.click(); return true }
+        }
+        return false
+      }, { nome: ficheiro })
+
+      if (clicou) break
+
+      const avancou = await page.evaluate(() => {
+        const f = document.getElementById('DigitalArchiveDetails_content') as HTMLIFrameElement
+        const btn = f?.contentDocument?.getElementById('wucFileList1_ibNext') as HTMLElement
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!avancou) break
+      await page.waitForTimeout(1500)
     }
+
+    if (!clicou) throw new Error(`o ficheiro "${ficheiro}" não foi encontrado na listagem de ${dataFiltro}`)
+
+    const download = await downloadPromise
 
     const os      = await import('os')
     const pathMod = await import('path')
     const fs      = await import('fs')
     destino = pathMod.join(os.tmpdir(), `arquivo-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`)
-    fs.writeFileSync(destino, buffer)
+    await download.saveAs(destino)
 
     await browser.close().catch(() => {})
     browser = null
