@@ -52,7 +52,25 @@ function parseFicheiro(ficheiro: string): { tipo: string; numero: string; ano: s
 async function abrirArquivoDigital(page: Page, log?: (msg: string) => Promise<void> | void): Promise<void> {
   // Procura "Arquivo digital" pelo título — robusto a mudanças de página/índice
   const found = await clicarToolboxPorTitulo(page, 'Arquivo digital', 11, log)
-  if (!found) throw new Error('Atalho "Arquivo digital" não encontrado no Toolbox')
+  if (!found) {
+    // CORRIGIDO 28/07/2026: já tentámos duas vezes diagnosticar isto só por texto
+    // de log (todas as páginas reportam "vazia" mesmo depois de esperar o Toolbox
+    // carregar) — chegou a um ponto em que precisamos de VER o ecrã real nesse
+    // momento, em vez de continuar a especular sobre seletores. Captura-se aqui
+    // uma screenshot completa e disponibiliza-se via URL, reaproveitando a mesma
+    // pasta estática que já serve os PDFs.
+    try {
+      const pastaDebug = path.join(process.cwd(), 'pdfs', 'debug')
+      fs.mkdirSync(pastaDebug, { recursive: true })
+      const nomeFicheiro = `toolbox-vazio-${Date.now()}.png`
+      await page.screenshot({ path: path.join(pastaDebug, nomeFicheiro), fullPage: true })
+      const backendUrl = process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'
+      await log?.(`  📸 Screenshot de diagnóstico: ${backendUrl}/api/pdfs/debug/${nomeFicheiro}`)
+    } catch (e) {
+      await log?.(`  ⚠️ Falha ao capturar screenshot de diagnóstico: ${e}`)
+    }
+    throw new Error('Atalho "Arquivo digital" não encontrado no Toolbox')
+  }
   await page.waitForTimeout(2000)
   await page.waitForFunction(
     () => !!document.getElementById('utilsDigitalArchive_content'),

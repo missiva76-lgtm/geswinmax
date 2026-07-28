@@ -67,7 +67,21 @@ async function irParaPaginaToolbox(page: Page, paginaAlvo: number): Promise<void
 async function exportarSAFT(page: Page, dataInicio: string, dataFim: string, log?: (msg: string) => Promise<void> | void): Promise<string> {
   // Procura "Exportar ficheiro SAF-T" pelo título — robusto a mudanças de página/índice
   const found = await clicarToolboxPorTitulo(page, 'SAF-T', 11, log)
-  if (!found) throw new Error('Atalho SAF-T não encontrado no Toolbox')
+  if (!found) {
+    // CORRIGIDO 28/07/2026: mesmo diagnóstico aplicado em syncArquivoDigital.ts —
+    // ver nota detalhada lá.
+    try {
+      const pastaDebug = path.join(process.cwd(), 'pdfs', 'debug')
+      fs.mkdirSync(pastaDebug, { recursive: true })
+      const nomeFicheiro = `toolbox-vazio-saft-${Date.now()}.png`
+      await page.screenshot({ path: path.join(pastaDebug, nomeFicheiro), fullPage: true })
+      const backendUrl = process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'
+      await log?.(`  📸 Screenshot de diagnóstico: ${backendUrl}/api/pdfs/debug/${nomeFicheiro}`)
+    } catch (e) {
+      await log?.(`  ⚠️ Falha ao capturar screenshot de diagnóstico: ${e}`)
+    }
+    throw new Error('Atalho SAF-T não encontrado no Toolbox')
+  }
   await page.waitForTimeout(2000)
   await page.waitForFunction(
     () => !!document.getElementById('utilsExportSAFTFile_content'), { timeout: 60000 })
