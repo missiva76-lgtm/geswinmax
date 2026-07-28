@@ -143,7 +143,13 @@ export default function Arquivo() {
     setPdfAFechar(doc.id || doc.ficheiro)
     try {
       const res = await fetch(url)
-      if (!res.ok) throw new Error(`o servidor respondeu ${res.status}`)
+      if (!res.ok) {
+        // O backend devolve uma página HTML com o motivo concreto — extrai-se aqui
+        // para o utilizador ver a causa em vez de apenas o código de estado.
+        const texto = await res.text().catch(() => '')
+        const detalhe = texto.match(/Detalhe técnico:\s*([^<]+)/)?.[1]?.trim()
+        throw new Error(detalhe || `o servidor respondeu ${res.status}`)
+      }
       const blob = await res.blob()
       const blobUrl = URL.createObjectURL(blob)
       window.open(blobUrl, '_blank', 'noopener')

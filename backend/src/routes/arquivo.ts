@@ -123,26 +123,35 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     await page.waitForTimeout(3000)
     await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 }).catch(() => {})
 
-    // Descarrega o PDF diretamente
-    const downloadPromise = page.waitForEvent('download', { timeout: 60000 })
-    await page.evaluate(({ url, file }: { url: string; file: string }) => {
-      const a = document.createElement('a')
-      a.href = `${url}/MTransactions/DigitalArchiveFileHandler.aspx?file=${encodeURIComponent(file)}`
-      a.click()
-    }, { url: baseUrl, file: ficheiro })
+    // CORRIGIDO 28/07/2026: antes clicava-se num link e esperava-se pelo evento
+    // 'download' do Playwright (60s). Isso é frágil — se o Chromium decidir abrir o
+    // PDF no visualizador interno em vez de o descarregar, o evento NUNCA dispara e
+    // a rota rebenta por timeout (erro 500 observado em produção). Passa-se a usar a
+    // mesma abordagem que já funciona de forma fiável na emissão de faturas
+    // (winmaxRPA.ts): aproveitar os cookies da sessão já autenticada e ir buscar o
+    // ficheiro por HTTP direto, sem depender do comportamento do browser.
+    const cookies = await context.cookies()
+    const cookieHeader = cookies.map((c: any) => `${c.name}=${c.value}`).join('; ')
+    const urlFicheiro = `${baseUrl}/MTransactions/DigitalArchiveFileHandler.aspx?file=${encodeURIComponent(ficheiro)}`
 
-    const download = await downloadPromise
+    const resp = await fetch(urlFicheiro, { headers: { Cookie: cookieHeader } })
+    if (!resp.ok) throw new Error(`o WinMax4 respondeu ${resp.status} ao pedir o ficheiro`)
 
-    // CORRIGIDO 28/07/2026: antes fazia-se `res.sendFile(await download.path())` e o
-    // bloco `finally` fechava o browser logo a seguir. Como o sendFile é assíncrono,
-    // o browser fechava DURANTE o envio — e o Playwright apaga os ficheiros
-    // descarregados ao fechar, pelo que o PDF desaparecia a meio. Agora copia-se
-    // primeiro para um local nosso (que sobrevive ao fecho do browser), fecha-se o
-    // browser para libertar memória, e só depois se envia.
+    const tipoConteudo = resp.headers.get('content-type') || ''
+    const buffer = Buffer.from(await resp.arrayBuffer())
+
+    // Se vier HTML em vez de PDF, quase de certeza que a sessão não ficou válida e
+    // o WinMax4 devolveu a página de login — vale a pena dizê-lo explicitamente em
+    // vez de entregar um "PDF" corrompido ao utilizador.
+    if (tipoConteudo.includes('text/html') || buffer.subarray(0, 4).toString() !== '%PDF') {
+      throw new Error('a resposta do WinMax4 não é um PDF válido (a sessão pode não estar autenticada)')
+    }
+
     const os      = await import('os')
     const pathMod = await import('path')
+    const fs      = await import('fs')
     destino = pathMod.join(os.tmpdir(), `arquivo-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`)
-    await download.saveAs(destino)
+    fs.writeFileSync(destino, buffer)
 
     await browser.close().catch(() => {})
     browser = null
@@ -152,7 +161,6 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     const nomeSeguro = ficheiro.replace(/[^\w.\-]/g, '_')
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', `inline; filename="${nomeSeguro}"`)
-    const fs = await import('fs')
     res.sendFile(destino, (err?: Error) => {
       if (err) logger.error(`Erro ao enviar PDF ${ficheiro}: ${err}`)
       fs.rmSync(destino, { force: true })
