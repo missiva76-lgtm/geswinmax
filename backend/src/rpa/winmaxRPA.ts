@@ -69,6 +69,26 @@ const MENU = {
   terminarSemImprimir: 'transactionDocumentsIssueCustomerStandardDocumentCloseWithoutPrinting',
 }
 
+/**
+ * Nome padrão do ficheiro PDF de uma fatura emitida.
+ *
+ * Formato combinado: CLIENTE_TIPO_NUMERO
+ *   ex: 83_FRB_2026_146.pdf   (cliente 83, tipo FRB, documento 2026/146)
+ *
+ * Existe como função única para que o backend (ficheiro guardado em disco e no
+ * Firebase Storage) e o frontend (nome do download no browser) não divirjam —
+ * era exatamente esse o problema: o backend guardava 83_FRB_2026_146.pdf mas o
+ * browser descarregava FRB_2026_146.pdf, sem o código do cliente.
+ *
+ * Devolve sempre sem extensão; quem chama acrescenta `.pdf`.
+ */
+export function nomePDFPadrao(clienteCodigo?: string, tipoDoc?: string, numeroDoc?: string): string {
+  return [clienteCodigo, tipoDoc, numeroDoc]
+    .filter(Boolean)
+    .join('_')
+    .replace(/[\/\\:*?"<>|]/g, '_')
+}
+
 class ErroLinhaArtigo extends Error {
   constructor(
     public readonly linha: number,
@@ -1000,7 +1020,8 @@ export class WinmaxRPA {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
 
       const buffer = Buffer.from(await resp.arrayBuffer())
-      const nomeSeguro = `${clienteCodigo ? clienteCodigo + '_' : ''}${tipDoc ? tipDoc + '_' : ''}${numPrevisto}`.replace(/[\/\\:*?"<>|]/g, '_')
+      // Formato combinado: CLIENTE_TIPO_NUMERO (ex: 83_FRB_2026_146.pdf)
+      const nomeSeguro = nomePDFPadrao(clienteCodigo, tipDoc, numPrevisto)
       const destino = path.join(this.config.pastaDestinoPDF || '/tmp/pdfs', `${nomeSeguro}.pdf`)
       fs.mkdirSync(path.dirname(destino), { recursive: true })
       fs.writeFileSync(destino, buffer)
@@ -1086,14 +1107,30 @@ export class WinmaxRPA {
       numDoc = semTipo.replace('_', '/') // 2026_85 → 2026/85
     }
 
-    // Renomeia o PDF com o número definitivo
-    if (localPDF && numDoc && numDoc !== numPrevisto) {
-      const nomeSeguro = numDoc.replace(/[\/\\:*?"<>|]/g, '_')
-      const novo = path.join(this.config.pastaDestinoPDF, `${nomeSeguro}.pdf`)
-      try { fs.renameSync(localPDF, novo) } catch { /**/ }
+    // Renomeia o PDF com o número definitivo (ao gravar só se conhece o previsto).
+    // CORRIGIDO 28/07/2026: tinha dois defeitos. (1) Renomeava para APENAS o número
+    // (ex: 2026_146.pdf), perdendo cliente e tipo — contra o formato combinado.
+    // (2) Devolvia sempre `localPDF`, o caminho ANTIGO, que deixava de existir após
+    // a renomeação; o emissaoJob fazia `fs.existsSync()` sobre esse caminho morto e
+    // gravava pdf_url a null — sem link no Histórico nem download automático.
+    // Só se aplica quando o PDF ficou em disco; se subiu para o Storage, `localPDF`
+    // é um URL e não há nada a renomear.
+    let caminhoFinal = localPDF
+    const ficouEmDisco = !!localPDF && !/^https?:\/\//i.test(localPDF)
+    if (ficouEmDisco && numDoc && numDoc !== numPrevisto) {
+      const novo = path.join(
+        this.config.pastaDestinoPDF,
+        `${nomePDFPadrao(fatura.cliente_codigo, fatura.tipo_documento, numDoc)}.pdf`
+      )
+      try {
+        fs.renameSync(localPDF, novo)
+        caminhoFinal = novo
+      } catch (e) {
+        await this.log(`  ⚠️ Não foi possível renomear o PDF: ${e}`)
+      }
     }
 
-    return { numDoc: numDoc || 'EMITIDO', localPDF, dataDocumento }
+    return { numDoc: numDoc || 'EMITIDO', localPDF: caminhoFinal, dataDocumento }
   }
 
   async criarFatura(fatura: Fatura): Promise<ResultadoFatura> {

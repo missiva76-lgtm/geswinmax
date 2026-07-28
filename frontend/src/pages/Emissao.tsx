@@ -5,6 +5,23 @@ import { useJob } from '../hooks/useJob'
 import { FaturaResultado } from '../types'
 import ServerWakingBanner from '../components/ServerWakingBanner'
 
+/**
+ * Nome padrão do ficheiro PDF — tem de coincidir com `nomePDFPadrao()` do backend
+ * (backend/src/rpa/winmaxRPA.ts).
+ *
+ * Formato combinado: CLIENTE_TIPO_NUMERO — ex: 83_FRB_2026_146.pdf
+ *
+ * CORRIGIDO 28/07/2026: o download no browser omitia o código do cliente
+ * (descarregava FRB_2026_146.pdf), apesar de ter sido pedido explicitamente que o
+ * nome o incluísse. Ficava também diferente do ficheiro guardado pelo servidor.
+ */
+function nomePDFPadrao(clienteCodigo?: string, tipoDoc?: string, numeroDoc?: string): string {
+  return [clienteCodigo, tipoDoc, numeroDoc]
+    .filter(Boolean)
+    .join('_')
+    .replace(/[\/\\:*?"<>|]/g, '_')
+}
+
 export default function Emissao() {
   const [jobId, setJobId] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -101,7 +118,7 @@ export default function Emissao() {
       emitidas.forEach(f => {
         if (f.pdf_url && !pdfsBaixados.current.has(f.pdf_url)) {
           pdfsBaixados.current.add(f.pdf_url)
-          const nomeFicheiro = `${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`
+          const nomeFicheiro = `${nomePDFPadrao(f.cliente_codigo, f.tipo_documento, f.numero_documento || f.fatura_id || 'doc')}.pdf`
           baixarPDF(f.pdf_url, nomeFicheiro)
         }
       })
@@ -274,7 +291,7 @@ export default function Emissao() {
                     </div>
                     {f.pdf_url && (
                       <button
-                        onClick={() => baixarPDF(f.pdf_url!, `${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'doc').replace('/', '_')}.pdf`)}
+                        onClick={() => baixarPDF(f.pdf_url!, `${nomePDFPadrao(f.cliente_codigo, f.tipo_documento, f.numero_documento || f.fatura_id || 'doc')}.pdf`)}
                         className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs shrink-0"
                         title="Descarregar PDF">
                         PDF <ExternalLink size={11}/>

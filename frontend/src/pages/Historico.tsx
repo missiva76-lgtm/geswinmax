@@ -45,6 +45,18 @@ const fmtTs = (ts?: { seconds?: number; _seconds?: number }) => {
   })
 }
 
+/**
+ * Nome padrão do ficheiro PDF — tem de coincidir com `nomePDFPadrao()` do backend
+ * (backend/src/rpa/winmaxRPA.ts) e da página de Emissão.
+ * Formato combinado: CLIENTE_TIPO_NUMERO — ex: 83_FRB_2026_146.pdf
+ */
+function nomePDFPadrao(clienteCodigo?: string, tipoDoc?: string, numeroDoc?: string): string {
+  return [clienteCodigo, tipoDoc, numeroDoc]
+    .filter(Boolean)
+    .join('_')
+    .replace(/[\/\\:*?"<>|]/g, '_')
+}
+
 const fmtEur = (v?: number | null) =>
   v != null ? `${Number(v).toFixed(2).replace('.', ',')} €` : '—'
 
@@ -96,7 +108,7 @@ export default function Historico() {
       if (!res.ok) throw new Error(`o servidor respondeu ${res.status}`)
       const blob = await res.blob()
       const blobUrl = URL.createObjectURL(blob)
-      const nome = `${f.tipo_documento ? f.tipo_documento + '_' : ''}${(f.numero_documento || f.fatura_id || 'documento').replace(/\//g, '_')}.pdf`
+      const nome = `${nomePDFPadrao(f.cliente_codigo, f.tipo_documento, f.numero_documento || f.fatura_id || 'documento')}.pdf`
       const a = document.createElement('a')
       a.href = blobUrl
       a.download = nome
