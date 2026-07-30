@@ -52,6 +52,7 @@ function Campo({ label, field, type = 'text', placeholder = '', value, onChange,
 function SyncButton() {
   const [estado, setEstado] = useState<'idle'|'running'|'done'|'erro'>('idle')
   const [msg, setMsg] = useState('')
+  const [log, setLog] = useState<string[]>([])
 
   const handleSync = async () => {
     if (!confirm('Confirmas a sincronização completa? Todos os dados serão apagados e reimportados do WinMax4.')) return
@@ -62,12 +63,28 @@ function SyncButton() {
       const jobId = r?.jobId
       if (!jobId) throw new Error('Sem jobId')
       setMsg('Sync em curso...')
+      // CORRIGIDO 30/07/2026: o limite era de 120 tentativas × 3s = 6 minutos. Com o
+      // histórico completo (e timeouts de exportação de 4 minutos em vendas e compras),
+      // a sincronização ultrapassa facilmente esse tempo — e a interface dava
+      // "Timeout" como se tivesse falhado, quando na verdade continuava a correr no
+      // servidor. Alargado para ~25 minutos e, se ainda assim exceder, a mensagem
+      // deixa claro que o processo NÃO foi interrompido.
       const poll = async (n = 0): Promise<void> => {
-        if (n > 120) { setEstado('erro'); setMsg('Timeout — verifica o Dashboard'); return }
+        if (n > 500) {
+          setEstado('idle')
+          setMsg('Ainda a decorrer no servidor — acompanha no Dashboard')
+          return
+        }
         const job = await fetch(`${API}/jobs/${jobId}`).then(res => res.json()).catch(() => null)
+        if (job?.log) setLog(job.log)
         if (job?.estado === 'concluido') { setEstado('done'); setMsg('✅ Sync concluída com sucesso!'); return }
-        if (job?.estado === 'erro') { setEstado('erro'); setMsg('❌ Erro na sync — verifica o Dashboard'); return }
-        setMsg(`Em curso... (${Math.round(n * 3)}s)`)
+        if (job?.estado === 'erro') {
+          setEstado('erro')
+          setMsg(`❌ ${job.erro_geral || 'Erro na sync — verifica o Dashboard'}`)
+          return
+        }
+        const mins = Math.floor(n * 3 / 60)
+        setMsg(mins > 0 ? `Em curso... (${mins} min)` : `Em curso... (${n * 3}s)`)
         setTimeout(() => poll(n + 1), 3000)
       }
       poll()
@@ -78,7 +95,8 @@ function SyncButton() {
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <>
+      <div className="flex items-center gap-3">
       <button onClick={handleSync} disabled={estado === 'running'}
         className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg text-white transition-all disabled:opacity-50
           ${estado === 'done' ? 'bg-green-600' : estado === 'erro' ? 'bg-red-600' : 'bg-amber-600 hover:bg-amber-700'}`}>
@@ -91,7 +109,21 @@ function SyncButton() {
         )}
       </button>
       {msg && <span className={`text-xs ${estado === 'erro' ? 'text-red-600' : estado === 'done' ? 'text-green-600' : 'text-amber-600'}`}>{msg}</span>}
-    </div>
+      </div>
+
+      {log.length > 0 && (
+        <div className="mt-3 bg-gray-900 rounded-lg p-3 h-48 overflow-y-auto font-mono text-xs">
+          {log.map((linha, i) => (
+            <div key={i} className={
+              linha.includes('❌') ? 'text-red-400' :
+              linha.includes('✅') ? 'text-green-400' :
+              linha.includes('⚠️') ? 'text-yellow-400' : 'text-gray-300'}>
+              {linha}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   )
 }
 
@@ -284,7 +316,8 @@ export default function Configuracoes() {
       <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-5">
         <p className="text-sm font-semibold text-amber-800 mb-1">🔄 Sincronização Completa</p>
         <p className="text-xs text-amber-600 mb-4">
-          Limpa todos os dados existentes (artigos, movimentos) e reimporta tudo do WinMax4 desde a data de início configurada acima. 
+          Limpa os movimentos existentes e reimporta <strong>todo o histórico</strong> do WinMax4
+          (os movimentos não são limitados pela data acima — essa aplica-se ao Arquivo Digital). 
           Pode demorar 3-5 minutos.
         </p>
         <div className="flex items-center gap-3">
