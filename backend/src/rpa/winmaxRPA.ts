@@ -171,7 +171,7 @@ export class WinmaxRPA {
 
     // Aguarda iframe de autenticação
     await this.page!.waitForFunction(
-      () => !!document.getElementById('UserAuthentication_content'),
+      () => !!document.getElementById('UserAuthentication_content'), undefined,
       { timeout: 60000 }
     )
 
@@ -200,7 +200,7 @@ export class WinmaxRPA {
     // Verifica se o login foi bem sucedido — aguarda que o Toolbox esteja presente
     try {
       await this.page!.waitForFunction(
-        () => !!document.getElementById('Toolbox_content'),
+        () => !!document.getElementById('Toolbox_content'), undefined,
         { timeout: 60000 }
       )
     } catch {
@@ -452,7 +452,7 @@ export class WinmaxRPA {
         const doc = tb?.contentDocument
         return !!(doc && doc.readyState === 'complete' &&
           doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
-      },
+      }, undefined,
       { timeout: 60000, polling: 500 }
     )
 
@@ -469,7 +469,7 @@ export class WinmaxRPA {
 
     // Aguarda o iframe aparecer no DOM
     await this.page!.waitForFunction(
-      () => !!document.getElementById('transactionDocumentsIssueCustomerStandard_content'),
+      () => !!document.getElementById('transactionDocumentsIssueCustomerStandard_content'), undefined,
       { timeout: 60000, polling: 300 }
     )
     await this.log('  📋 Iframe transactionDocuments presente')

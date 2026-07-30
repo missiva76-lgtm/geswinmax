@@ -84,7 +84,7 @@ async function exportarSAFT(page: Page, dataInicio: string, dataFim: string, log
   }
   await page.waitForTimeout(2000)
   await page.waitForFunction(
-    () => !!document.getElementById('utilsExportSAFTFile_content'), { timeout: 60000 })
+    () => !!document.getElementById('utilsExportSAFTFile_content'), undefined, { timeout: 60000 })
 
   // Configura o período "A definir" e as datas
   await page.evaluate(({ di, df }: { di: string; df: string }) => {
@@ -116,7 +116,7 @@ async function exportarSAFT(page: Page, dataInicio: string, dataFim: string, log
 
   // Confirma o MessageBox ("Confirma a exportação do ficheiro SAF-T?")
   await page.waitForFunction(
-    () => !!document.getElementById('UtilsExportSAFT_content'), { timeout: 60000 })
+    () => !!document.getElementById('UtilsExportSAFT_content'), undefined, { timeout: 60000 })
   await page.evaluate(() => {
     const mb = document.getElementById('UtilsExportSAFT_content') as HTMLIFrameElement
     ;(mb?.contentDocument?.getElementById('wucButtonYes_linkButton1') as HTMLElement)?.click()
@@ -128,7 +128,7 @@ async function exportarSAFT(page: Page, dataInicio: string, dataFim: string, log
       const prog = document.getElementById('utilsExportSAFTFileProgressWindowID_content') as HTMLIFrameElement
       const msg  = prog?.contentDocument?.getElementById('lblMessage')?.innerText?.trim() || ''
       return msg.includes('sucesso') || msg.includes('conclu') || msg.includes('gerado')
-    },
+    }, undefined,
     { timeout: 60000 }
   )
   await page.waitForTimeout(1000)
@@ -313,7 +313,7 @@ export async function syncSAFT(
 
     // Aguarda o iframe de autenticação
     await page.waitForFunction(
-      () => !!document.getElementById('UserAuthentication_content'),
+      () => !!document.getElementById('UserAuthentication_content'), undefined,
       { timeout: 60000 }
     )
 
@@ -338,7 +338,7 @@ export async function syncSAFT(
       })
     ])
     await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 60000 })
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 60000 })
     await log('✅ Login OK')
 
     const nomeFicheiro = await exportarSAFT(page, di, df, log)

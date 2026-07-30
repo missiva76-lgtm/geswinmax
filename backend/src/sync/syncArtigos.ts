@@ -31,7 +31,7 @@ async function loginWinmax(page: Page, config: any, log?: (msg: string) => Promi
 
   await passo('login 2/5 — a aguardar o formulário de autenticação')
   await page.waitForFunction(
-    () => !!document.getElementById('UserAuthentication_content'),
+    () => !!document.getElementById('UserAuthentication_content'), undefined,
     { timeout: 90000 }
   )
 
@@ -69,7 +69,7 @@ async function loginWinmax(page: Page, config: any, log?: (msg: string) => Promi
   }
 
   await passo('login 5/5 — a aguardar o Toolbox')
-  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 })
+  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 90000 })
 }
 
 // Abre uma listagem, muda para CSV e faz download

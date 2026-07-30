@@ -11,7 +11,7 @@ async function aguardarIcones(page: Page, timeout: number): Promise<boolean> {
       const doc = tb?.contentDocument
       return !!(doc && doc.readyState === 'complete' &&
         doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
-    },
+    }, undefined,
     { timeout, polling: 500 }
   ).then(() => true).catch(() => false)
 }

@@ -73,7 +73,7 @@ async function abrirArquivoDigital(page: Page, log?: (msg: string) => Promise<vo
   }
   await page.waitForTimeout(2000)
   await page.waitForFunction(
-    () => !!document.getElementById('utilsDigitalArchive_content'),
+    () => !!document.getElementById('utilsDigitalArchive_content'), undefined,
     { timeout: 60000 }
   )
 }
@@ -85,7 +85,7 @@ async function abrirDetalhesDocumentos(page: Page): Promise<void> {
   })
   await page.waitForTimeout(2000)
   await page.waitForFunction(
-    () => !!document.getElementById('DigitalArchiveDetails_content'),
+    () => !!document.getElementById('DigitalArchiveDetails_content'), undefined,
     { timeout: 10000 }
   )
 }
@@ -241,7 +241,7 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
 
     // Aguarda o iframe de autenticação
     await page.waitForFunction(
-      () => !!document.getElementById('UserAuthentication_content'),
+      () => !!document.getElementById('UserAuthentication_content'), undefined,
       { timeout: 60000 }
     )
 

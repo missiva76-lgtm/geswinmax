@@ -114,7 +114,7 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     // Login
     await page.goto(`${baseUrl}/MainPage.aspx?CompanyCode=${company}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('UserAuthentication_content'), { timeout: 60000 })
+    await page.waitForFunction(() => !!document.getElementById('UserAuthentication_content'), undefined, { timeout: 60000 })
     await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
       const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
       const doc = f?.contentDocument
@@ -128,7 +128,7 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
     await page.waitForTimeout(3000)
-    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 }).catch(() => {})
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 90000 }).catch(() => {})
 
     // CORRIGIDO 28/07/2026: o endereço "DigitalArchiveFileHandler.aspx?file=..." que
     // aqui se usava NUNCA foi confirmado a partir da aplicação — era uma suposição, e
@@ -150,7 +150,7 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     const encontrouAtalho = await clicarToolboxPorTitulo(page, 'Arquivo digital')
     if (!encontrouAtalho) throw new Error('atalho "Arquivo digital" não encontrado no Toolbox')
     await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('utilsDigitalArchive_content'), { timeout: 60000 })
+    await page.waitForFunction(() => !!document.getElementById('utilsDigitalArchive_content'), undefined, { timeout: 60000 })
 
     // Categoria "Documentos"
     await page.evaluate(() => {
@@ -158,7 +158,7 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
       ;(f?.contentDocument?.getElementById('ibDetailsDocuments') as HTMLElement)?.click()
     })
     await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('DigitalArchiveDetails_content'), { timeout: 30000 })
+    await page.waitForFunction(() => !!document.getElementById('DigitalArchiveDetails_content'), undefined, { timeout: 30000 })
 
     // Filtro pela data do documento
     await page.evaluate(({ d }: { d: string }) => {
@@ -303,7 +303,7 @@ router.get('/diagnostico', async (_req: Request, res: Response) => {
 
     await page.goto(`${baseUrl}/MainPage.aspx?CompanyCode=${company}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('UserAuthentication_content'), { timeout: 60000 })
+    await page.waitForFunction(() => !!document.getElementById('UserAuthentication_content'), undefined, { timeout: 60000 })
     await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
       const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
       const doc = f?.contentDocument
@@ -317,12 +317,12 @@ router.get('/diagnostico', async (_req: Request, res: Response) => {
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
     await page.waitForTimeout(3000)
-    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 })
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 90000 })
 
     const encontrou = await clicarToolboxPorTitulo(page, 'Arquivo digital')
     if (!encontrou) throw new Error('Atalho "Arquivo digital" não encontrado no Toolbox')
     await page.waitForTimeout(3000)
-    await page.waitForFunction(() => !!document.getElementById('utilsDigitalArchive_content'), { timeout: 60000 })
+    await page.waitForFunction(() => !!document.getElementById('utilsDigitalArchive_content'), undefined, { timeout: 60000 })
 
     // Abre a categoria "Documentos" e espera pela grelha
     await page.evaluate(() => {
