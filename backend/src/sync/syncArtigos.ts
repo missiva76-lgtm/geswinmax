@@ -396,7 +396,10 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       di: dataInicio, df: dataFim,
       // Intervalos longos (histórico completo) obrigam o WinMax4 a gerar muito mais
       // dados; 60s era insuficiente e provocava exatamente a perda descrita acima.
-      timeout: 240000,
+      // CALIBRADO 30/07/2026 com tempos reais de produção: vendas demoraram 147s e
+      // compras 287s (estas excederam o limite anterior de 240s por 47 segundos).
+      // 10 minutos dá folga confortável sem ficar refém de uma estimativa apertada.
+      timeout: 600000,
     })
 
     if (csvVendas && opts?.forceCompleto) {
@@ -463,7 +466,7 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
       di: dataInicio, df: dataFim,
-      timeout: 240000,
+      timeout: 600000,
     })
 
     if (csvCompras && opts?.forceCompleto) {
