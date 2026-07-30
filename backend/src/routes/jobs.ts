@@ -63,6 +63,12 @@ router.get('/', async (_req: Request, res: Response) => {
 // POST /api/jobs/sync — Força sync manual (?force=true para sync completo desde data_inicio)
 router.post('/sync', async (req: Request, res: Response) => {
   const forceCompleto = req.query.force === 'true' || req.body?.force === true
+  // Permite correr apenas uma das exportações — ver nota em syncArtigos.ts
+  const partesValidas = ['tudo', 'artigos', 'vendas', 'compras'] as const
+  const parteParam = String(req.query.parte || 'tudo')
+  const parte = (partesValidas as readonly string[]).includes(parteParam)
+    ? (parteParam as typeof partesValidas[number])
+    : 'tudo'
   const jobId = uuidv4()
   await db().collection('jobs').doc(jobId).set({
     id: jobId, tipo: 'sync', estado: 'ativo',
@@ -72,7 +78,7 @@ router.post('/sync', async (req: Request, res: Response) => {
   // CORRIGIDO 28/07/2026: `concluido_em` só era gravado nas emissões, nunca nas
   // sincronizações — pelo que o Dashboard não tinha forma de saber QUANDO uma
   // sincronização terminou (só quando arrancou). Passa a ser registado aqui.
-  syncWinmax(jobId, { forceCompleto })
+  syncWinmax(jobId, { forceCompleto, parte })
     .then(() => updateJob(jobId, {
       estado: 'concluido', progresso: 100,
       concluido_em: admin.firestore.FieldValue.serverTimestamp(),

@@ -54,12 +54,19 @@ function SyncButton() {
   const [msg, setMsg] = useState('')
   const [log, setLog] = useState<string[]>([])
 
-  const handleSync = async () => {
-    if (!confirm('Confirmas a sincronização completa? Todos os dados serão apagados e reimportados do WinMax4.')) return
+  // CORRIGIDO 30/07/2026: passa a ser possível correr cada exportação isoladamente.
+  // A exportação de compras falhava sempre que corria a seguir às vendas (~6 min de
+  // trabalho antes dela) e nenhuma tentativa de a recuperar dentro da mesma sessão
+  // resultou. Correndo sozinha, com browser novo, o problema não se coloca — e
+  // permite repetir só o que falhou em vez de repetir a sincronização inteira.
+  const handleSync = async (parte: 'tudo' | 'artigos' | 'vendas' | 'compras' = 'tudo') => {
+    const alvo = parte === 'tudo' ? 'completa' : parte
+    if (!confirm(`Confirmas a sincronização ${alvo}? Os dados existentes serão apagados e reimportados do WinMax4.`)) return
     setEstado('running')
+    setLog([])
     setMsg('A iniciar sync...')
     try {
-      const r = await fetch(`${API}/jobs/sync?force=true`, { method: 'POST' }).then(res => res.json())
+      const r = await fetch(`${API}/jobs/sync?force=true&parte=${parte}`, { method: 'POST' }).then(res => res.json())
       const jobId = r?.jobId
       if (!jobId) throw new Error('Sem jobId')
       setMsg('Sync em curso...')
@@ -96,8 +103,8 @@ function SyncButton() {
 
   return (
     <>
-      <div className="flex items-center gap-3">
-      <button onClick={handleSync} disabled={estado === 'running'}
+      <div className="flex items-center gap-3 flex-wrap">
+      <button onClick={() => handleSync('tudo')} disabled={estado === 'running'}
         className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg text-white transition-all disabled:opacity-50
           ${estado === 'done' ? 'bg-green-600' : estado === 'erro' ? 'bg-red-600' : 'bg-amber-600 hover:bg-amber-700'}`}>
         {estado === 'running' ? (
@@ -109,6 +116,16 @@ function SyncButton() {
         )}
       </button>
       {msg && <span className={`text-xs ${estado === 'erro' ? 'text-red-600' : estado === 'done' ? 'text-green-600' : 'text-amber-600'}`}>{msg}</span>}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap mt-3">
+        <span className="text-xs text-gray-400">Ou sincronizar só uma parte:</span>
+        {([['artigos','Artigos'],['vendas','Vendas'],['compras','Compras']] as const).map(([p, label]) => (
+          <button key={p} onClick={() => handleSync(p)} disabled={estado === 'running'}
+            className="px-3 py-1.5 text-xs border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50 disabled:opacity-50">
+            {label}
+          </button>
+        ))}
       </div>
 
       {log.length > 0 && (

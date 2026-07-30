@@ -200,12 +200,28 @@ function parsearCSV(csvPath: string): Record<string, string>[] {
   }).filter(l => Object.values(l).some(v => v))
 }
 
-export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolean }): Promise<void> {
+export type ParteSync = 'tudo' | 'artigos' | 'vendas' | 'compras'
+
+/**
+ * Sincroniza dados do WinMax4.
+ *
+ * `parte` permite correr apenas uma das exportações — cada uma num job próprio,
+ * com browser novo. Existe porque a exportação de compras falhava sistematicamente
+ * quando corria depois das vendas (~6 min de trabalho intenso antes dela), e nenhuma
+ * das tentativas de a recuperar dentro da mesma sessão funcionou: nem novo login,
+ * nem limpar os iframes acumulados. Correr isolada elimina o problema pela raiz e
+ * dá controlo para repetir só o que falhou, em vez de repetir 15 minutos.
+ */
+export async function syncWinmax(
+  jobId?: string,
+  opts?: { forceCompleto?: boolean; parte?: ParteSync }
+): Promise<void> {
   const log = async (msg: string) => {
     logger.info(msg)
     if (jobId) await appendJobLog(jobId, msg).catch(() => {})
   }
 
+  const parte: ParteSync = opts?.parte || 'tudo'
   const config  = await getConfig()
   const company = config.company_code || 'AUTOAVENIDA'
 
@@ -253,9 +269,9 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
         }
       }
     }
-    await log(`🔄 Sync WinMax4 (incremental): ${dataInicio} → ${dataFim}`)
+    await log(`🔄 Sync WinMax4 (incremental${parte !== 'tudo' ? ` — só ${parte}` : ''}): ${dataInicio} → ${dataFim}`)
   } else {
-    await log(`🔄 Sync WinMax4 (COMPLETO): ${dataInicio} → ${dataFim}`)
+    await log(`🔄 Sync WinMax4 (COMPLETO${parte !== 'tudo' ? ` — só ${parte}` : ''}): ${dataInicio} → ${dataFim}`)
   }
 
   let browser: Browser | null = null
@@ -346,6 +362,7 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     }
 
     // ─── Artigos Existências ───────────────────────────────────────────────
+    if (parte === 'tudo' || parte === 'artigos') {
     await log('📦 Artigos Existências (CSV)...')
     const csvArtigos = await exportarCSV(page, '/MReports/Files/ArticleExistences.aspx', company)
     if (csvArtigos) {
@@ -383,7 +400,10 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       await log('  ⚠️ Sem ficheiro CSV')
     }
 
+    }
+
     // ─── Vendas por Artigo ────────────────────────────────────────────────
+    if (parte === 'tudo' || parte === 'vendas') {
     await log('📈 Vendas por Artigo (CSV)...')
     // Limpa a coleção antes de reimportar — APENAS em sincronização completa.
     //
@@ -463,7 +483,10 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       await log('  ⚠️ Sem CSV de vendas (timeout ou sem dados) — dados existentes PRESERVADOS, nada foi apagado')
     }
 
+    }
+
     // ─── Compras por Artigo ───────────────────────────────────────────────
+    if (parte === 'tudo' || parte === 'compras') {
     await log('📉 Compras por Artigo (CSV)...')
     // Limpa a coleção antes de reimportar — APENAS em sincronização completa.
     // Ver nota detalhada no bloco equivalente das vendas, acima.
@@ -543,6 +566,8 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       fs.rmSync(csvCompras, { force: true })
     } else {
       await log('  ⚠️ Sem CSV de compras (timeout ou sem dados) — dados existentes PRESERVADOS, nada foi apagado')
+    }
+
     }
 
     await db().collection('sync_log').add({
