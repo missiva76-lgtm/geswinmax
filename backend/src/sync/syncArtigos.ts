@@ -394,12 +394,9 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
       di: dataInicio, df: dataFim,
-      // Intervalos longos (histórico completo) obrigam o WinMax4 a gerar muito mais
-      // dados; 60s era insuficiente e provocava exatamente a perda descrita acima.
-      // CALIBRADO 30/07/2026 com tempos reais de produção: vendas demoraram 147s e
-      // compras 287s (estas excederam o limite anterior de 240s por 47 segundos).
-      // 10 minutos dá folga confortável sem ficar refém de uma estimativa apertada.
-      timeout: 600000,
+      // Intervalos longos (histórico completo) obrigam o WinMax4 a gerar mais dados.
+      // 5 minutos cobre folgadamente o caso real medido (vendas: 147s).
+      timeout: 300000,
     })
 
     if (csvVendas && opts?.forceCompleto) {
@@ -462,12 +459,32 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     // em movimentos_venda — ver comentário acima para detalhe.
     // Mesma inversão de ordem aplicada às vendas — ver nota detalhada acima.
 
-    const csvCompras = await exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
+    // CORRIGIDO 30/07/2026: a exportação das compras falhava sistematicamente quando
+    // corria DEPOIS de todo o trabalho pesado das vendas (~6 min após o login). Os
+    // números mostraram que não era lentidão — esgotava sempre o limite, fosse ele de
+    // 240s ou de 600s, ou seja, o download nunca chegava a acontecer. Já numa execução
+    // em que as vendas falharam cedo, as compras exportaram sem problema. Tudo aponta
+    // para a sessão do WinMax4 se degradar ao fim de vários minutos de trabalho
+    // intenso. Por isso, se a exportação falhar, renova-se a sessão e tenta-se de novo.
+    const exportarCompras = () => exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
       di: dataInicio, df: dataFim,
-      timeout: 600000,
+      timeout: 300000,
     })
+
+    let csvCompras = await exportarCompras()
+
+    if (!csvCompras) {
+      await log('  ⚠️ Exportação de compras falhou — a renovar sessão no WinMax4 e a tentar de novo...')
+      try {
+        await loginWinmax(page, config)
+        await log('  ✅ Sessão renovada')
+        csvCompras = await exportarCompras()
+      } catch (e) {
+        await log(`  ⚠️ Não foi possível renovar a sessão: ${e}`)
+      }
+    }
 
     if (csvCompras && opts?.forceCompleto) {
       await log('  🗑️ A limpar movimentos_compra antigos...')
