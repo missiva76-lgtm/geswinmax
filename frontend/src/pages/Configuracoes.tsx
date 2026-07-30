@@ -252,9 +252,13 @@ export default function Configuracoes() {
 
         {/* Sync */}
         <div className="bg-white border border-gray-100 rounded-xl p-5">
-          <p className="text-sm font-medium text-gray-700 mb-4">Sincronização automática</p>
+          <p className="text-sm font-medium text-gray-700 mb-1">Sincronização automática</p>
+          <p className="text-xs text-gray-400 mb-4">
+            A data de início aplica-se apenas ao <strong>Arquivo Digital</strong>. Os movimentos de
+            venda e compra são sempre importados na totalidade, independentemente desta data.
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Campo label="Data de início" field="sync_data_inicio" placeholder="01-01-2000"
+            <Campo label="Data de início (Arquivo Digital)" field="sync_data_inicio" placeholder="01-01-2000"
               value={config.sync_data_inicio} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>
             <Campo label="Data de fim (vazio = hoje)" field="sync_data_fim" placeholder="DD-MM-YYYY"
               value={config.sync_data_fim} onChange={handleChange} showPass={showPass} onToggleShowPass={() => setShowPass(s => !s)}/>

@@ -197,21 +197,39 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
   const config  = await getConfig()
   const company = config.company_code || 'AUTOAVENIDA'
 
-  let dataInicio = (config.sync_data_inicio || '01-01-2000').replace(/-/g, '/')
+  // CORRIGIDO 29/07/2026: os movimentos passam a cobrir SEMPRE todo o histórico.
+  // Antes usavam `config.sync_data_inicio` (01-01-2024), o que tornava a
+  // "Sincronização Completa" afinal incompleta — ficava limitada a essa data.
+  // Esse campo continua a aplicar-se ao Arquivo Digital, onde faz sentido limitar
+  // o volume; para os movimentos, o que se quer é a totalidade.
+  const MOVIMENTOS_DESDE = '01/01/2000'
+  let dataInicio = MOVIMENTOS_DESDE
   const dataFim = (config.sync_data_fim || new Date().toLocaleDateString('pt-PT').replace(/\//g,'-')).replace(/-/g,'/')
 
   if (!opts?.forceCompleto) {
     // Sync incremental: usa a data da última sync bem-sucedida (menos 2 dias de margem)
+    //
+    // CORRIGIDO 29/07/2026: esta consulta ordenava por `criado_em`, mas os registos
+    // de sync_log gravam a data no campo `executado_em` — nunca `criado_em`. No
+    // Firestore, ordenar por um campo inexistente EXCLUI esses documentos, pelo que
+    // a consulta devolvia sempre vazio e a data nunca era ajustada. Resultado: o sync
+    // dito "incremental" reimportava sempre o intervalo completo, todas as noites.
+    //
+    // Também se evita aqui `orderBy` combinado com `where` (exigiria um índice
+    // composto no Firestore): traz-se um punhado de registos e ordena-se em memória.
     const ultimaSyncSnap = await db().collection('sync_log')
       .where('tipo', '==', 'winmax_completa')
-      .orderBy('criado_em', 'desc')
-      .limit(1)
+      .limit(50)
       .get()
       .catch(() => null)
 
-    if (ultimaSyncSnap && !ultimaSyncSnap.empty) {
-      const ultima = ultimaSyncSnap.docs[0].data()
-      const ultimaData = ultima.criado_em?.toDate?.() || null
+    const bemSucedidas = (ultimaSyncSnap?.docs || [])
+      .map(d => d.data())
+      .filter(d => d.estado === 'ok' && d.executado_em?.toDate)
+      .sort((a, b) => b.executado_em.toDate().getTime() - a.executado_em.toDate().getTime())
+
+    if (bemSucedidas.length > 0) {
+      const ultimaData: Date | null = bemSucedidas[0].executado_em.toDate()
       if (ultimaData) {
         const margem = new Date(ultimaData)
         margem.setDate(margem.getDate() - 2)
@@ -355,7 +373,19 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
 
     // ─── Vendas por Artigo ────────────────────────────────────────────────
     await log('📈 Vendas por Artigo (CSV)...')
-    // Limpa coleção antes de reimportar (evita registos órfãos de syncs antigas com mapeamento diferente)
+    // Limpa a coleção antes de reimportar — APENAS em sincronização completa.
+    //
+    // CORRIGIDO 29/07/2026: esta limpeza era incondicional. Combinada com o sync
+    // incremental (que só traz os últimos dias), apagaria todo o histórico e
+    // deixaria apenas essa janela. Não chegou a acontecer em produção porque o
+    // incremental estava ele próprio avariado (ver nota acima) e trazia sempre tudo
+    // — mas ao corrigir o incremental, esta limpeza passaria a ser destrutiva.
+    //
+    // Numa sincronização incremental não é necessária: cada movimento tem um id
+    // determinístico (documento_artigo_data), pelo que a reimportação sobrepõe-se
+    // aos registos existentes sem duplicar. A limpeza continua a fazer sentido na
+    // sincronização completa, para eliminar registos órfãos de importações antigas.
+    if (opts?.forceCompleto) {
     await log('  🗑️ A limpar movimentos_venda antigos...')
     // CORRIGIDO 03/07/2026: o limite de 10 rondas × 400 registos = teto rígido de 4000.
     // Coleções maiores ficavam com registos órfãos por limpar, silenciosamente (sem erro,
@@ -371,6 +401,10 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       totalRemovidosVenda += snap.size
     }
     if (totalRemovidosVenda > 0) await log(`  🗑️ ${totalRemovidosVenda} registos de vendas antigos removidos`)
+    } else {
+      await log('  ↻ Sync incremental — histórico de vendas preservado (só se atualiza o período recente)')
+    }
+
     const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
@@ -413,9 +447,11 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
 
     // ─── Compras por Artigo ───────────────────────────────────────────────
     await log('📉 Compras por Artigo (CSV)...')
-    // Limpa coleção antes de reimportar
+    // Limpa a coleção antes de reimportar — APENAS em sincronização completa.
+    // Ver nota detalhada no bloco equivalente das vendas, acima.
     // CORRIGIDO 03/07/2026: mesmo problema do teto rígido de 4000 registos que existia
     // em movimentos_venda — ver comentário acima para detalhe.
+    if (opts?.forceCompleto) {
     let totalRemovidosCompra = 0
     for (let tentativa = 0; tentativa < 200; tentativa++) {
       const snap = await db().collection('movimentos_compra').limit(490).get().catch(() => null)
@@ -426,6 +462,10 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       totalRemovidosCompra += snap.size
     }
     if (totalRemovidosCompra > 0) await log(`  🗑️ ${totalRemovidosCompra} registos de compras antigos removidos`)
+    } else {
+      await log('  ↻ Sync incremental — histórico de compras preservado (só se atualiza o período recente)')
+    }
+
     const csvCompras = await exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
