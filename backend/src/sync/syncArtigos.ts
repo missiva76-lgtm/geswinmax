@@ -90,14 +90,19 @@ async function exportarCSV(
   
   // Injeta a listagem como iframe dentro do MainPage
   await page.evaluate(({ urlPath, company, iframeId, base }: any) => {
-    // Remove iframe anterior se existir
-    const existente = document.getElementById(iframeId)
-    existente?.remove()
-    
+    // CORRIGIDO 30/07/2026: removia-se apenas o iframe com o MESMO id, pelo que os
+    // relatórios anteriores ficavam na página. Ao chegar às compras já havia três
+    // iframes em ecrã inteiro empilhados (artigos, vendas, compras), cada um com uma
+    // página de relatório do WinMax4 carregada — num servidor com 512 MB. É a
+    // explicação mais provável para a exportação das compras falhar sempre que corre
+    // depois das vendas, e nunca quando corre cedo. Agora removem-se todos.
+    document.querySelectorAll('iframe[data-rpa-relatorio]').forEach(el => el.remove())
+
     // Cria novo iframe
     const iframe = document.createElement('iframe')
     iframe.id = iframeId
     iframe.name = iframeId
+    iframe.dataset.rpaRelatorio = '1'
     iframe.src = `${base}${urlPath}?CompanyCode=${company}`
     iframe.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;'
     document.body.appendChild(iframe)
@@ -483,14 +488,14 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     let csvCompras = await exportarCompras()
 
     if (!csvCompras) {
-      await log('  ⚠️ Exportação de compras falhou — a renovar sessão no WinMax4 e a tentar de novo...')
-      try {
-        await loginWinmax(page, config, log)
-        await log('  ✅ Sessão renovada')
-        csvCompras = await exportarCompras()
-      } catch (e) {
-        await log(`  ⚠️ Não foi possível renovar a sessão: ${e}`)
-      }
+      // CORRIGIDO 30/07/2026: aqui tentava-se um novo login. Não funciona — o WinMax4
+      // mantém a sessão anterior ativa e devolve sempre o ecrã de autenticação sem
+      // avançar (confirmado no log: 90s à espera de uma navegação que nunca acontece).
+      // Uma simples repetição, já com os iframes anteriores limpos, é mais adequada.
+      await log('  ⚠️ Exportação de compras falhou — a tentar de novo com a página limpa...')
+      await page.waitForTimeout(5000)
+      csvCompras = await exportarCompras()
+      if (csvCompras) await log('  ✅ Segunda tentativa das compras bem sucedida')
     }
 
     if (csvCompras && opts?.forceCompleto) {
