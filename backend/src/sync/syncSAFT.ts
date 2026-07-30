@@ -271,6 +271,7 @@ export async function syncSAFT(
 
   let browser: Browser | null = null
   let releaseLock: (() => void) | null = null
+  let paginaAtiva: Page | null = null
 
   try {
     releaseLock = await acquireBrowserLock()
@@ -293,6 +294,7 @@ export async function syncSAFT(
       storageState: { cookies: [], origins: [] },
     })
     const page = await context.newPage()
+    paginaAtiva = page
 
     // CORRIGIDO 28/07/2026: mesma proteção já aplicada ao winmaxRPA.ts,
     // syncArtigos.ts e syncArquivoDigital.ts — um diálogo nativo do browser
@@ -413,6 +415,16 @@ export async function syncSAFT(
     })
     throw err
   } finally {
+    // CORRIGIDO 30/07/2026: fechar o browser NÃO termina a sessão do lado do WinMax4,
+    // que continua a ocupar um posto de licença. Com sessões abandonadas a acumular,
+    // os logins seguintes ficam presos no ecrã de autenticação (confirmado em
+    // produção no sync de artigos). Terminar sessão liberta o posto.
+    if (paginaAtiva) {
+      try {
+        const ok = await clicarToolboxPorTitulo(paginaAtiva, 'Terminar sessão')
+        if (ok) await paginaAtiva.waitForTimeout(2000)
+      } catch { /* não crítico */ }
+    }
     await browser?.close().catch(() => {})
     releaseLock?.()
   }

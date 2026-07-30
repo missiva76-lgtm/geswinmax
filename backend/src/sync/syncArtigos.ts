@@ -12,6 +12,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { db, appendJobLog, getConfig } from '../services/firebase'
 import { logger } from '../services/logger'
+import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
 
 const BASE = 'https://app102.winmax4.com'
 
@@ -276,6 +277,9 @@ export async function syncWinmax(
 
   let browser: Browser | null = null
   let releaseLock: (() => void) | null = null
+  // Referência acessível no `finally`, para libertar o posto de licença do WinMax4
+  // mesmo quando a sincronização termina com erro.
+  let libertarSessao: (() => Promise<void>) | null = null
   try {
     releaseLock = await acquireBrowserLock()
 
@@ -318,9 +322,36 @@ export async function syncWinmax(
       await log('✅ Login OK')
     }
 
+    /**
+     * Termina a sessão no WinMax4 antes de fechar o browser.
+     *
+     * CORRIGIDO 30/07/2026: fechar o browser NÃO termina a sessão do lado do servidor
+     * — o WinMax4 mantém-na (e o posto de licença) ocupada. Confirmado em produção:
+     * com browser novo e tudo, o TERCEIRO login consecutivo ficava preso no ecrã de
+     * autenticação (90s à espera de uma navegação que nunca acontecia), enquanto o
+     * primeiro e o segundo passavam sem problema. A instalação tem um número limitado
+     * de postos, e cada sessão abandonada consome um deles.
+     */
+    const terminarSessao = async () => {
+      try {
+        const ok = await clicarToolboxPorTitulo(page, 'Terminar sessão')
+        if (ok) {
+          await page.waitForTimeout(2000)
+          await log('  🔓 Sessão do WinMax4 terminada')
+        } else {
+          await log('  ⚠️ Atalho "Terminar sessão" não encontrado — sessão pode ficar ocupada')
+        }
+      } catch (e) {
+        await log(`  ⚠️ Não foi possível terminar a sessão: ${e}`)
+      }
+    }
+
+    libertarSessao = terminarSessao
+
     /** Fecha o browser atual e abre outro — sessão limpa para a parte seguinte. */
     const renovarBrowser = async () => {
       await log('  ♻️ A reiniciar o browser para a parte seguinte...')
+      await terminarSessao()
       await browser?.close().catch(() => {})
       browser = null
       await abrirBrowser()
@@ -609,6 +640,10 @@ export async function syncWinmax(
     // estado do job reflete o que realmente aconteceu.
     throw err
   } finally {
+    // Termina a sessão antes de fechar — ver nota em terminarSessao(). Sem isto, o
+    // posto de licença fica ocupado e os logins seguintes ficam presos no ecrã de
+    // autenticação.
+    if (libertarSessao) await libertarSessao().catch(() => {})
     await browser?.close().catch(() => {})
     releaseLock?.()
   }
