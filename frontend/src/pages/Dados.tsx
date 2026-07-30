@@ -530,6 +530,16 @@ export default function Dados() {
 
       {/* Resumo */}
       {tab === 'resumo' && (
+        <>
+        {/* Diagnóstico: mostra quantos movimentos alimentam o resumo. Sem isto não há
+            forma de distinguir "não há dados no período" de "os dados existem mas o
+            cálculo não os apanha" — foi exatamente essa a dúvida em 30/07/2026. */}
+        <p className="text-xs text-gray-400 mb-2">
+          Carregados: {vendas.length} venda(s) e {compras.length} compra(s) ·
+          No período selecionado: {filtrarPorFamilia(filtrarPorData(vendas)).length} venda(s) e{' '}
+          {filtrarPorFamilia(filtrarPorData(compras)).length} compra(s) ·
+          Resumo: {resumoCalculado.length} artigo(s)
+        </p>
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -567,6 +577,7 @@ export default function Dados() {
           </div>
           <Pager total={resumoCalculado.length}/>
         </div>
+        </>
       )}
     </div>
   )
