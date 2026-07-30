@@ -278,38 +278,55 @@ export async function syncWinmax(
   let releaseLock: (() => void) | null = null
   try {
     releaseLock = await acquireBrowserLock()
-    // CORRIGIDO 27/07/2026: ver nota detalhada em syncArquivoDigital.ts — evita
-    // crash do Chromium por falta de espaço em /dev/shm em containers.
-    browser = await chromium.launch({
-      headless: true,
-      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
-      args: [
-        '--disable-dev-shm-usage',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-gpu',
-      ],
-    })
-    const context = await browser.newContext({
-      locale: 'pt-PT', timezoneId: 'Europe/Lisbon', acceptDownloads: true,
-      storageState: { cookies: [], origins: [] },
-    })
-    const page = await context.newPage()
 
-    // CORRIGIDO 20/07/2026: descoberto no winmaxRPA.ts (emissão de faturas) que um
-    // clique pode disparar um diálogo nativo do browser (alert/confirm) que, sem um
-    // handler registado, bloqueia a página inteira até ao timeout — manifestando-se
-    // como "locator.click: Timeout ... performing click action" sem mais nenhum erro.
-    // Como este sync navega a mesma interface WinMax4 (ASP.NET WebForms), aplica-se a
-    // mesma proteção aqui, por precaução, mesmo sem termos confirmado ainda que
-    // aconteceu neste ficheiro especificamente.
-    page.on('dialog', async (dialog) => {
-      await log(`  🔔 Diálogo nativo do browser detetado: [${dialog.type()}] "${dialog.message()}" — a aceitar automaticamente`)
-      await dialog.accept().catch(() => {})
-    })
+    // CORRIGIDO 30/07/2026: cada parte passa a correr com um browser NOVO.
+    //
+    // Confirmado em produção: a exportação de compras falhava sistematicamente
+    // quando corria depois das vendas na mesma sessão (5 min de espera esgotados,
+    // duas vezes seguidas), mas correu sem qualquer dificuldade em 155 segundos
+    // quando executada isoladamente. Nem novo login, nem limpar os iframes
+    // acumulados resolveram — só um browser limpo. Reiniciá-lo entre partes torna a
+    // "Sincronização Completa" fiável sem obrigar a usar os botões individuais.
+    let page!: Page
 
-    await loginWinmax(page, config, log)
-    await log('✅ Login OK')
+    const abrirBrowser = async () => {
+      browser = await chromium.launch({
+        headless: true,
+        executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+        // Evita crash do Chromium por falta de espaço em /dev/shm em containers.
+        args: [
+          '--disable-dev-shm-usage',
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-gpu',
+        ],
+      })
+      const context = await browser.newContext({
+        locale: 'pt-PT', timezoneId: 'Europe/Lisbon', acceptDownloads: true,
+        storageState: { cookies: [], origins: [] },
+      })
+      page = await context.newPage()
+
+      // Um diálogo nativo do browser (alert/confirm), sem handler registado, bloqueia
+      // a página inteira até ao timeout — ver nota equivalente em winmaxRPA.ts.
+      page.on('dialog', async (dialog) => {
+        await log(`  🔔 Diálogo nativo do browser detetado: [${dialog.type()}] "${dialog.message()}" — a aceitar automaticamente`)
+        await dialog.accept().catch(() => {})
+      })
+
+      await loginWinmax(page, config, log)
+      await log('✅ Login OK')
+    }
+
+    /** Fecha o browser atual e abre outro — sessão limpa para a parte seguinte. */
+    const renovarBrowser = async () => {
+      await log('  ♻️ A reiniciar o browser para a parte seguinte...')
+      await browser?.close().catch(() => {})
+      browser = null
+      await abrirBrowser()
+    }
+
+    await abrirBrowser()
 
     const now = admin.firestore.FieldValue.serverTimestamp()
 
@@ -404,6 +421,7 @@ export async function syncWinmax(
 
     // ─── Vendas por Artigo ────────────────────────────────────────────────
     if (parte === 'tudo' || parte === 'vendas') {
+    if (parte === 'tudo') await renovarBrowser()
     await log('📈 Vendas por Artigo (CSV)...')
     // Limpa a coleção antes de reimportar — APENAS em sincronização completa.
     //
@@ -487,6 +505,7 @@ export async function syncWinmax(
 
     // ─── Compras por Artigo ───────────────────────────────────────────────
     if (parte === 'tudo' || parte === 'compras') {
+    if (parte === 'tudo') await renovarBrowser()
     await log('📉 Compras por Artigo (CSV)...')
     // Limpa a coleção antes de reimportar — APENAS em sincronização completa.
     // Ver nota detalhada no bloco equivalente das vendas, acima.
