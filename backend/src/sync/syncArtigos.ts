@@ -385,31 +385,37 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     // determinístico (documento_artigo_data), pelo que a reimportação sobrepõe-se
     // aos registos existentes sem duplicar. A limpeza continua a fazer sentido na
     // sincronização completa, para eliminar registos órfãos de importações antigas.
-    if (opts?.forceCompleto) {
-    await log('  🗑️ A limpar movimentos_venda antigos...')
-    // CORRIGIDO 03/07/2026: o limite de 10 rondas × 400 registos = teto rígido de 4000.
-    // Coleções maiores ficavam com registos órfãos por limpar, silenciosamente (sem erro,
-    // sem aviso). Agora repete até a coleção ficar vazia, com uma margem de segurança
-    // (200 rondas = 98000 registos) só para evitar um loop infinito em caso de bug.
-    let totalRemovidosVenda = 0
-    for (let tentativa = 0; tentativa < 200; tentativa++) {
-      const snap = await db().collection('movimentos_venda').limit(490).get().catch(() => null)
-      if (!snap || snap.empty) break
-      const delBatch = db().batch()
-      snap.docs.forEach(d => delBatch.delete(d.ref))
-      await delBatch.commit().catch(() => {})
-      totalRemovidosVenda += snap.size
-    }
-    if (totalRemovidosVenda > 0) await log(`  🗑️ ${totalRemovidosVenda} registos de vendas antigos removidos`)
-    } else {
-      await log('  ↻ Sync incremental — histórico de vendas preservado (só se atualiza o período recente)')
-    }
-
+    // CORRIGIDO 30/07/2026: a ordem era APAGAR e só depois exportar. Confirmado em
+    // produção: ao alargar o intervalo para 01/01/2000, a exportação das vendas
+    // ultrapassou o timeout e, como a coleção já tinha sido apagada, o utilizador
+    // ficou SEM VENDAS NENHUMAS. A exportação passa a ser feita PRIMEIRO — a
+    // coleção só é limpa depois de os dados estarem garantidos em mão.
     const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
       di: dataInicio, df: dataFim,
+      // Intervalos longos (histórico completo) obrigam o WinMax4 a gerar muito mais
+      // dados; 60s era insuficiente e provocava exatamente a perda descrita acima.
+      timeout: 240000,
     })
+
+    if (csvVendas && opts?.forceCompleto) {
+      await log('  🗑️ A limpar movimentos_venda antigos...')
+      // CORRIGIDO 03/07/2026: o limite de 10 rondas × 400 registos = teto rígido de 4000.
+      // Coleções maiores ficavam com registos órfãos por limpar, silenciosamente.
+      let totalRemovidosVenda = 0
+      for (let tentativa = 0; tentativa < 200; tentativa++) {
+        const snap = await db().collection('movimentos_venda').limit(490).get().catch(() => null)
+        if (!snap || snap.empty) break
+        const delBatch = db().batch()
+        snap.docs.forEach(d => delBatch.delete(d.ref))
+        await delBatch.commit().catch(() => {})
+        totalRemovidosVenda += snap.size
+      }
+      if (totalRemovidosVenda > 0) await log(`  🗑️ ${totalRemovidosVenda} registos de vendas antigos removidos`)
+    } else if (!opts?.forceCompleto) {
+      await log('  ↻ Sync incremental — histórico de vendas preservado (só se atualiza o período recente)')
+    }
     if (csvVendas) {
       const vendas = parsearCSV(csvVendas)
       await log(`  → ${vendas.length} linhas vendas | headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
@@ -442,7 +448,7 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       await commitBatches(ops)
       fs.rmSync(csvVendas, { force: true })
     } else {
-      await log('  ⚠️ Sem CSV de vendas (timeout ou sem dados)')
+      await log('  ⚠️ Sem CSV de vendas (timeout ou sem dados) — dados existentes PRESERVADOS, nada foi apagado')
     }
 
     // ─── Compras por Artigo ───────────────────────────────────────────────
@@ -451,27 +457,31 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     // Ver nota detalhada no bloco equivalente das vendas, acima.
     // CORRIGIDO 03/07/2026: mesmo problema do teto rígido de 4000 registos que existia
     // em movimentos_venda — ver comentário acima para detalhe.
-    if (opts?.forceCompleto) {
-    let totalRemovidosCompra = 0
-    for (let tentativa = 0; tentativa < 200; tentativa++) {
-      const snap = await db().collection('movimentos_compra').limit(490).get().catch(() => null)
-      if (!snap || snap.empty) break
-      const delBatch = db().batch()
-      snap.docs.forEach(d => delBatch.delete(d.ref))
-      await delBatch.commit().catch(() => {})
-      totalRemovidosCompra += snap.size
-    }
-    if (totalRemovidosCompra > 0) await log(`  🗑️ ${totalRemovidosCompra} registos de compras antigos removidos`)
-    } else {
-      await log('  ↻ Sync incremental — histórico de compras preservado (só se atualiza o período recente)')
-    }
+    // Mesma inversão de ordem aplicada às vendas — ver nota detalhada acima.
 
     const csvCompras = await exportarCSV(page, '/MReports/Transactions/PurchasesArticleMovements.aspx', company, {
       campoInicio: 'wucCalendarFromDate_txtModernDate',
       campoFim:    'wucCalendarToDate_txtModernDate',
       di: dataInicio, df: dataFim,
-      timeout: 60000,
+      timeout: 240000,
     })
+
+    if (csvCompras && opts?.forceCompleto) {
+      await log('  🗑️ A limpar movimentos_compra antigos...')
+      let totalRemovidosCompra = 0
+      for (let tentativa = 0; tentativa < 200; tentativa++) {
+        const snap = await db().collection('movimentos_compra').limit(490).get().catch(() => null)
+        if (!snap || snap.empty) break
+        const delBatch = db().batch()
+        snap.docs.forEach(d => delBatch.delete(d.ref))
+        await delBatch.commit().catch(() => {})
+        totalRemovidosCompra += snap.size
+      }
+      if (totalRemovidosCompra > 0) await log(`  🗑️ ${totalRemovidosCompra} registos de compras antigos removidos`)
+    } else if (!opts?.forceCompleto) {
+      await log('  ↻ Sync incremental — histórico de compras preservado (só se atualiza o período recente)')
+    }
+
     if (csvCompras) {
       const compras = parsearCSV(csvCompras)
       await log(`  → ${compras.length} linhas compras | headers: ${Object.keys(compras[0] || {}).join(' | ')}`)
@@ -500,7 +510,7 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       await commitBatches(opsCompras)
       fs.rmSync(csvCompras, { force: true })
     } else {
-      await log('  ⚠️ Sem CSV de compras (timeout ou sem dados)')
+      await log('  ⚠️ Sem CSV de compras (timeout ou sem dados) — dados existentes PRESERVADOS, nada foi apagado')
     }
 
     await db().collection('sync_log').add({
