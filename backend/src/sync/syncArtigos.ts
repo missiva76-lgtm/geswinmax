@@ -15,18 +15,25 @@ import { logger } from '../services/logger'
 
 const BASE = 'https://app102.winmax4.com'
 
-async function loginWinmax(page: Page, config: any): Promise<void> {
+// CORRIGIDO 30/07/2026: o login tem cinco etapas distintas, mas nenhuma aparecia no
+// log do job — só na consola do servidor, invisível para quem usa a aplicação. Quando
+// falhou com "TimeoutError: 30000ms" (um valor que não corresponde a nenhuma espera
+// deste ficheiro, todas de 90s), o log tinha apenas duas linhas e não havia forma de
+// saber em que etapa parou. Passa a registar cada passo, para a próxima falha ser
+// diagnosticável de imediato em vez de exigir mais uma ronda de tentativas.
+async function loginWinmax(page: Page, config: any, log?: (msg: string) => Promise<void> | void): Promise<void> {
+  const passo = async (msg: string) => { console.log(`[Sync] ${msg}`); await log?.(`  · ${msg}`) }
+
   const url = `${BASE}/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-  console.log('[Sync] A navegar para WinMax4...')
+  await passo('login 1/5 — a abrir a página do WinMax4')
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 })
-  console.log('[Sync] Página carregada, a aguardar UserAuthentication_content...')
   await page.waitForTimeout(3000)
 
+  await passo('login 2/5 — a aguardar o formulário de autenticação')
   await page.waitForFunction(
     () => !!document.getElementById('UserAuthentication_content'),
     { timeout: 90000 }
   )
-  console.log('[Sync] UserAuthentication_content encontrado')
 
   await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
     const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
@@ -37,7 +44,7 @@ async function loginWinmax(page: Page, config: any): Promise<void> {
     if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
   }, { user: config.utilizador || '', pass: config.password || '' })
 
-  console.log('[Sync] Credenciais preenchidas, a clicar Confirmar...')
+  await passo('login 3/5 — credenciais preenchidas, a confirmar')
   await page.waitForTimeout(300)
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 90000 }).catch((e) => {
@@ -48,7 +55,7 @@ async function loginWinmax(page: Page, config: any): Promise<void> {
       ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
     })
   ])
-  console.log('[Sync] Pós-login, a aguardar Toolbox_content...')
+  await passo('login 4/5 — a aguardar o carregamento pós-autenticação')
   await page.waitForTimeout(3000)
   
   // Verifica se ainda está no ecrã de login (credenciais erradas)
@@ -58,11 +65,11 @@ async function loginWinmax(page: Page, config: any): Promise<void> {
       const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
       return f?.contentDocument?.body?.innerText?.substring(0, 200) || ''
     }).catch(() => '')
-    console.log('[Sync] AINDA no ecrã de login! Texto:', erro)
+    await passo(`⚠️ ainda no ecrã de login — resposta do WinMax4: ${erro.slice(0, 120)}`)
   }
-  
+
+  await passo('login 5/5 — a aguardar o Toolbox')
   await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), { timeout: 90000 })
-  console.log('[Sync] Toolbox_content encontrado — login OK')
 }
 
 // Abre uma listagem, muda para CSV e faz download
@@ -280,7 +287,7 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       await dialog.accept().catch(() => {})
     })
 
-    await loginWinmax(page, config)
+    await loginWinmax(page, config, log)
     await log('✅ Login OK')
 
     const now = admin.firestore.FieldValue.serverTimestamp()
@@ -478,7 +485,7 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
     if (!csvCompras) {
       await log('  ⚠️ Exportação de compras falhou — a renovar sessão no WinMax4 e a tentar de novo...')
       try {
-        await loginWinmax(page, config)
+        await loginWinmax(page, config, log)
         await log('  ✅ Sessão renovada')
         csvCompras = await exportarCompras()
       } catch (e) {
@@ -547,6 +554,11 @@ export async function syncWinmax(jobId?: string, opts?: { forceCompleto?: boolea
       executado_em: admin.firestore.FieldValue.serverTimestamp(), estado: 'erro',
     })
     if (jobId) await appendJobLog(jobId, `❌ ${err}`).catch(() => {})
+    // CORRIGIDO 30/07/2026: o erro era registado mas NÃO relançado, pelo que quem
+    // chama (routes/jobs.ts) dava o job como 'concluido' — o Dashboard mostrava
+    // sucesso mesmo quando a sincronização tinha falhado. Relançar garante que o
+    // estado do job reflete o que realmente aconteceu.
+    throw err
   } finally {
     await browser?.close().catch(() => {})
     releaseLock?.()
