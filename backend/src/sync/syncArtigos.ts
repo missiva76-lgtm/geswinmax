@@ -450,91 +450,18 @@ export async function syncWinmax(
 
     }
 
-    // ─── Vendas por Artigo ────────────────────────────────────────────────
-    if (parte === 'tudo' || parte === 'vendas') {
-    if (parte === 'tudo') await renovarBrowser()
-    await log('📈 Vendas por Artigo (CSV)...')
-    // Limpa a coleção antes de reimportar — APENAS em sincronização completa.
-    //
-    // CORRIGIDO 29/07/2026: esta limpeza era incondicional. Combinada com o sync
-    // incremental (que só traz os últimos dias), apagaria todo o histórico e
-    // deixaria apenas essa janela. Não chegou a acontecer em produção porque o
-    // incremental estava ele próprio avariado (ver nota acima) e trazia sempre tudo
-    // — mas ao corrigir o incremental, esta limpeza passaria a ser destrutiva.
-    //
-    // Numa sincronização incremental não é necessária: cada movimento tem um id
-    // determinístico (documento_artigo_data), pelo que a reimportação sobrepõe-se
-    // aos registos existentes sem duplicar. A limpeza continua a fazer sentido na
-    // sincronização completa, para eliminar registos órfãos de importações antigas.
-    // CORRIGIDO 30/07/2026: a ordem era APAGAR e só depois exportar. Confirmado em
-    // produção: ao alargar o intervalo para 01/01/2000, a exportação das vendas
-    // ultrapassou o timeout e, como a coleção já tinha sido apagada, o utilizador
-    // ficou SEM VENDAS NENHUMAS. A exportação passa a ser feita PRIMEIRO — a
-    // coleção só é limpa depois de os dados estarem garantidos em mão.
-    const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesArticleMovements.aspx', company, {
-      campoInicio: 'wucCalendarFromDate_txtModernDate',
-      campoFim:    'wucCalendarToDate_txtModernDate',
-      di: dataInicio, df: dataFim,
-      // Intervalos longos (histórico completo) obrigam o WinMax4 a gerar mais dados.
-      // 5 minutos cobre folgadamente o caso real medido (vendas: 147s).
-      timeout: 300000,
-    })
-
-    if (csvVendas && opts?.forceCompleto) {
-      await log('  🗑️ A limpar movimentos_venda antigos...')
-      // CORRIGIDO 03/07/2026: o limite de 10 rondas × 400 registos = teto rígido de 4000.
-      // Coleções maiores ficavam com registos órfãos por limpar, silenciosamente.
-      let totalRemovidosVenda = 0
-      for (let tentativa = 0; tentativa < 200; tentativa++) {
-        const snap = await db().collection('movimentos_venda').limit(490).get().catch(() => null)
-        if (!snap || snap.empty) break
-        const delBatch = db().batch()
-        snap.docs.forEach(d => delBatch.delete(d.ref))
-        await delBatch.commit().catch(() => {})
-        totalRemovidosVenda += snap.size
-      }
-      if (totalRemovidosVenda > 0) await log(`  🗑️ ${totalRemovidosVenda} registos de vendas antigos removidos`)
-    } else if (!opts?.forceCompleto) {
-      await log('  ↻ Sync incremental — histórico de vendas preservado (só se atualiza o período recente)')
-    }
-    if (csvVendas) {
-      const vendas = parsearCSV(csvVendas)
-      await log(`  → ${vendas.length} linhas vendas | headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
-      if (vendas[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(vendas[0]).slice(0,8))}`)
-      const ops = vendas.flatMap(v => {
-        const id = `${v['Document'] || v['DocumentID'] || ''}_${v['ArticleCode'] || ''}_${v['DocumentDate'] || ''}`.split('/').join('_')
-        if (!v['DocumentDate'] || !v['ArticleCode']) return []
-        const qtd = parseFloat((v['Quantity'] || '0').replace(',','.')) || 0
-        const precoUnitSemIva = parseFloat((v['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0
-        // O campo "Total" do CSV SalesArticleMovements é SEM IVA (confirmado: ≈ preço unit. x qtd)
-        const totalSemIva = parseFloat((v['Total'] || '0').replace(',','.')) || (precoUnitSemIva * qtd)
-        const taxaIva = parseFloat((v['TaxFeeRatePercentage'] || '23').replace(',','.')) || 23
-        const totalComIva = Math.round(totalSemIva * (1 + taxaIva / 100) * 100) / 100
-        return [{ col: 'movimentos_venda', id, data: {
-          data:             v['DocumentDate'] || '',
-          numero_doc:       v['Document'] || v['DocumentID'] || '',
-          cliente_codigo:   v['EntityCode'] || '',
-          cliente_nome:     v['EntityName'] || '',
-          artigo_codigo:    v['ArticleCode'] || '',
-          artigo_descricao: v['ArticleDesignation'] || '',
-          familia:          v['FamilyDesignation'] || '',
-          quantidade:       qtd,
-          preco_unitario:   precoUnitSemIva,
-          total:            totalComIva,
-          total_sem_iva:    Math.round(totalSemIva * 100) / 100,
-          vendedor:         v['SalesPersonName'] || '',
-          ultima_sync:      now,
-        }}]
-      })
-      await commitBatches(ops)
-      fs.rmSync(csvVendas, { force: true })
-    } else {
-      await log('  ⚠️ Sem CSV de vendas (timeout ou sem dados) — dados existentes PRESERVADOS, nada foi apagado')
-    }
-
-    }
-
     // ─── Compras por Artigo ───────────────────────────────────────────────
+    //
+    // ORDEM IMPORTANTE (30/07/2026): as compras correm ANTES das vendas, de propósito.
+    //
+    // As vendas são de longe a exportação mais pesada (~26 mil linhas contra ~12 mil).
+    // Confirmado em produção que o login seguinte a essa exportação falha sempre —
+    // fica preso no ecrã de autenticação, mesmo com browser novo e mesmo terminando
+    // corretamente a sessão anterior. O servidor WinMax4 parece precisar de tempo
+    // para recuperar depois de gerar um relatório desse tamanho.
+    //
+    // Deixando as vendas em ÚLTIMO, deixa de existir qualquer login a seguir a elas.
+    // Não trocar esta ordem sem verificar isto de novo.
     if (parte === 'tudo' || parte === 'compras') {
     if (parte === 'tudo') await renovarBrowser()
     await log('📉 Compras por Artigo (CSV)...')
@@ -616,6 +543,90 @@ export async function syncWinmax(
       fs.rmSync(csvCompras, { force: true })
     } else {
       await log('  ⚠️ Sem CSV de compras (timeout ou sem dados) — dados existentes PRESERVADOS, nada foi apagado')
+    }
+
+    }
+
+    // ─── Vendas por Artigo ────────────────────────────────────────────────
+    if (parte === 'tudo' || parte === 'vendas') {
+    if (parte === 'tudo') await renovarBrowser()
+    await log('📈 Vendas por Artigo (CSV)...')
+    // Limpa a coleção antes de reimportar — APENAS em sincronização completa.
+    //
+    // CORRIGIDO 29/07/2026: esta limpeza era incondicional. Combinada com o sync
+    // incremental (que só traz os últimos dias), apagaria todo o histórico e
+    // deixaria apenas essa janela. Não chegou a acontecer em produção porque o
+    // incremental estava ele próprio avariado (ver nota acima) e trazia sempre tudo
+    // — mas ao corrigir o incremental, esta limpeza passaria a ser destrutiva.
+    //
+    // Numa sincronização incremental não é necessária: cada movimento tem um id
+    // determinístico (documento_artigo_data), pelo que a reimportação sobrepõe-se
+    // aos registos existentes sem duplicar. A limpeza continua a fazer sentido na
+    // sincronização completa, para eliminar registos órfãos de importações antigas.
+    // CORRIGIDO 30/07/2026: a ordem era APAGAR e só depois exportar. Confirmado em
+    // produção: ao alargar o intervalo para 01/01/2000, a exportação das vendas
+    // ultrapassou o timeout e, como a coleção já tinha sido apagada, o utilizador
+    // ficou SEM VENDAS NENHUMAS. A exportação passa a ser feita PRIMEIRO — a
+    // coleção só é limpa depois de os dados estarem garantidos em mão.
+    const csvVendas = await exportarCSV(page, '/MReports/Transactions/SalesArticleMovements.aspx', company, {
+      campoInicio: 'wucCalendarFromDate_txtModernDate',
+      campoFim:    'wucCalendarToDate_txtModernDate',
+      di: dataInicio, df: dataFim,
+      // Intervalos longos (histórico completo) obrigam o WinMax4 a gerar mais dados.
+      // 5 minutos cobre folgadamente o caso real medido (vendas: 147s).
+      timeout: 300000,
+    })
+
+    if (csvVendas && opts?.forceCompleto) {
+      await log('  🗑️ A limpar movimentos_venda antigos...')
+      // CORRIGIDO 03/07/2026: o limite de 10 rondas × 400 registos = teto rígido de 4000.
+      // Coleções maiores ficavam com registos órfãos por limpar, silenciosamente.
+      let totalRemovidosVenda = 0
+      for (let tentativa = 0; tentativa < 200; tentativa++) {
+        const snap = await db().collection('movimentos_venda').limit(490).get().catch(() => null)
+        if (!snap || snap.empty) break
+        const delBatch = db().batch()
+        snap.docs.forEach(d => delBatch.delete(d.ref))
+        await delBatch.commit().catch(() => {})
+        totalRemovidosVenda += snap.size
+      }
+      if (totalRemovidosVenda > 0) await log(`  🗑️ ${totalRemovidosVenda} registos de vendas antigos removidos`)
+    } else if (!opts?.forceCompleto) {
+      await log('  ↻ Sync incremental — histórico de vendas preservado (só se atualiza o período recente)')
+    }
+    if (csvVendas) {
+      const vendas = parsearCSV(csvVendas)
+      await log(`  → ${vendas.length} linhas vendas | headers: ${Object.keys(vendas[0] || {}).join(' | ')}`)
+      if (vendas[0]) await log(`  → Exemplo: ${JSON.stringify(Object.entries(vendas[0]).slice(0,8))}`)
+      const ops = vendas.flatMap(v => {
+        const id = `${v['Document'] || v['DocumentID'] || ''}_${v['ArticleCode'] || ''}_${v['DocumentDate'] || ''}`.split('/').join('_')
+        if (!v['DocumentDate'] || !v['ArticleCode']) return []
+        const qtd = parseFloat((v['Quantity'] || '0').replace(',','.')) || 0
+        const precoUnitSemIva = parseFloat((v['UnitaryPriceWithoutTaxesAfterDiscounts'] || '0').replace(',','.')) || 0
+        // O campo "Total" do CSV SalesArticleMovements é SEM IVA (confirmado: ≈ preço unit. x qtd)
+        const totalSemIva = parseFloat((v['Total'] || '0').replace(',','.')) || (precoUnitSemIva * qtd)
+        const taxaIva = parseFloat((v['TaxFeeRatePercentage'] || '23').replace(',','.')) || 23
+        const totalComIva = Math.round(totalSemIva * (1 + taxaIva / 100) * 100) / 100
+        return [{ col: 'movimentos_venda', id, data: {
+          data:             v['DocumentDate'] || '',
+          numero_doc:       v['Document'] || v['DocumentID'] || '',
+          cliente_codigo:   v['EntityCode'] || '',
+          cliente_nome:     v['EntityName'] || '',
+          artigo_codigo:    v['ArticleCode'] || '',
+          artigo_descricao: v['ArticleDesignation'] || '',
+          familia:          v['FamilyDesignation'] || '',
+          quantidade:       qtd,
+          preco_unitario:   precoUnitSemIva,
+          total:            totalComIva,
+          total_sem_iva:    Math.round(totalSemIva * 100) / 100,
+          vendedor:         v['SalesPersonName'] || '',
+          ultima_sync:      now,
+        }}]
+      })
+      await commitBatches(ops)
+      fs.rmSync(csvVendas, { force: true })
+    } else {
+      await log('  ⚠️ Sem CSV de vendas (timeout ou sem dados) — dados existentes PRESERVADOS, nada foi apagado')
     }
 
     }
