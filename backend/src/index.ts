@@ -16,6 +16,7 @@ import configRouter  from './routes/config'
 import arquivoRouter from './routes/arquivo'
 import saftRouter    from './routes/saft'
 import dadosRouter    from './routes/dados'
+import documentosRouter from './routes/documentos'
 
 for (const dir of ['logs', 'tmp/uploads', 'pdfs', 'pdfs/arquivo', 'saft']) {
   fs.mkdirSync(path.join(process.cwd(), dir), { recursive: true })
@@ -86,6 +87,7 @@ app.use('/api/config',  configRouter)
 app.use('/api/arquivo', arquivoRouter)
 app.use('/api/dados',   dadosRouter)
 app.use('/api/saft',    saftRouter)
+app.use('/api/documentos', documentosRouter)
 
 async function agendarSync() {
   console.info('[agendarSync] A ler config...')

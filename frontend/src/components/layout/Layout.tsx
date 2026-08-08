@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { FileSpreadsheet, LayoutDashboard, Package, Archive, Settings, LogOut, Menu, X, BarChart2, History } from 'lucide-react'
+import { FileSpreadsheet, LayoutDashboard, Package, Archive, Settings, LogOut, Menu, X, BarChart2, History, Receipt } from 'lucide-react'
 const APP_VERSION = '202606291200'
 import { auth, signOut } from '../../services/firebase'
 import InstallPWA from '../InstallPWA'
@@ -10,6 +10,7 @@ const nav = [
   { to: '/emissao',      icon: FileSpreadsheet,  label: 'Emissão' },
   { to: '/dados',        icon: Package,          label: 'Dados WinMax4' },
   { to: '/arquivo',      icon: Archive,          label: 'Arquivo digital' },
+  { to: '/documentos',   icon: Receipt,          label: 'Documentos' },
   { to: '/saft',         icon: BarChart2,         label: 'SAF-T' },
   { to: '/historico',    icon: History,          label: 'Histórico' },
   { to: '/configuracoes',icon: Settings,         label: 'Configurações' },

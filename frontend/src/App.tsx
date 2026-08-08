@@ -10,6 +10,7 @@ import Arquivo from './pages/Arquivo'
 import Configuracoes from './pages/Configuracoes'
 import SAFTDashboard from './pages/SAFTDashboard'
 import Historico from './pages/Historico'
+import Documentos from './pages/Documentos'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/configuracoes" element={<PrivateRoute><Configuracoes/></PrivateRoute>}/>
         <Route path="/saft"          element={<PrivateRoute><SAFTDashboard/></PrivateRoute>}/>
         <Route path="/historico"      element={<PrivateRoute><Historico/></PrivateRoute>}/>
+        <Route path="/documentos"    element={<PrivateRoute><Documentos/></PrivateRoute>}/>
         <Route path="*"              element={<Navigate to="/" replace/>}/>
       </Routes>
     </BrowserRouter>

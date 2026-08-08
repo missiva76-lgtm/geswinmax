@@ -102,6 +102,18 @@ export async function triggerSyncArquivo(): Promise<{ jobId: string }> {
   return res.json()
 }
 
+export async function getDocumentos() {
+  const res = await fetchWithRetry(`${API}/documentos`)
+  if (!res.ok) return []
+  return res.json()
+}
+
+export async function triggerSyncDocumentos(): Promise<{ jobId: string }> {
+  const res = await fetchWithRetry(`${API}/documentos/sync`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 export async function getSaft() {
   const res = await fetchWithRetry(`${API}/saft`)
   if (!res.ok) return []
