@@ -1,6 +1,7 @@
 // v202606191609 - tipos documento + FRB + upload fix
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
+import { useAcessoAutomatico } from './hooks/useAcessoAutomatico'
 import Layout from './components/layout/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -28,9 +29,12 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const { user, loading } = useAuth()
+  // Entrada automática quando aberto a partir de outra app com ?acesso=CHAVE
+  // (ver hooks/useAcessoAutomatico.ts para o contexto e as limitações)
+  const { aEntrar } = useAcessoAutomatico(!!user, loading)
 
-  // Enquanto verifica o estado de auth, mostra loading
-  if (loading) return (
+  // Enquanto verifica o estado de auth (ou entra automaticamente), mostra loading
+  if (loading || aEntrar) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"/>
     </div>
