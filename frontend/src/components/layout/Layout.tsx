@@ -4,21 +4,27 @@ import { FileSpreadsheet, LayoutDashboard, Package, Archive, Settings, LogOut, M
 const APP_VERSION = '202606291200'
 import { auth, signOut } from '../../services/firebase'
 import InstallPWA from '../InstallPWA'
+import { usePermissoes } from '../../hooks/usePermissoes'
 
+// `permissao` indica qual a permissão necessária. Sem `permissao`, a entrada é
+// visível para todos — ver hooks/usePermissoes.ts
 const nav = [
   { to: '/',             icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/emissao',      icon: FileSpreadsheet,  label: 'Emissão' },
+  { to: '/emissao',      icon: FileSpreadsheet,  label: 'Emissão',        permissao: 'podeEmitir' as const },
   { to: '/dados',        icon: Package,          label: 'Dados WinMax4' },
   { to: '/arquivo',      icon: Archive,          label: 'Arquivo digital' },
   { to: '/documentos',   icon: Receipt,          label: 'Documentos' },
   { to: '/saft',         icon: BarChart2,         label: 'SAF-T' },
-  { to: '/historico',    icon: History,          label: 'Histórico' },
-  { to: '/configuracoes',icon: Settings,         label: 'Configurações' },
+  { to: '/historico',    icon: History,          label: 'Histórico',      permissao: 'podeVerHistorico' as const },
+  { to: '/configuracoes',icon: Settings,         label: 'Configurações',  permissao: 'podeConfigurar' as const },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation()
   const [open, setOpen] = useState(false)
+  const permissoes = usePermissoes()
+
+  const navVisivel = nav.filter(item => !item.permissao || permissoes[item.permissao])
 
   return (
     <div className="min-h-screen flex bg-gray-50">
@@ -44,7 +50,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 py-4 px-3 space-y-0.5">
-          {nav.map(({ to, icon: Icon, label }) => (
+          {navVisivel.map(({ to, icon: Icon, label }) => (
             <Link key={to} to={to}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
                 ${pathname === to
@@ -77,7 +83,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {open && (
         <div className="md:hidden fixed inset-0 z-10 pt-14" style={{ background: '#0d7b6b' }}>
           <nav className="py-3 px-3 space-y-0.5">
-            {nav.map(({ to, icon: Icon, label }) => (
+            {navVisivel.map(({ to, icon: Icon, label }) => (
               <Link key={to} to={to} onClick={() => setOpen(false)}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
                   ${pathname === to ? 'bg-white text-teal-700' : 'text-white/80'}`}>
