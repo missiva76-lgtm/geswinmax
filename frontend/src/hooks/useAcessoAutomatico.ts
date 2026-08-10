@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { auth, signInWithEmailAndPassword } from '../services/firebase'
+import { auth, signInWithEmailAndPassword, signOut } from '../services/firebase'
 
 /**
  * Acesso automático quando a app é aberta a partir de outra aplicação.
@@ -32,13 +32,25 @@ import { auth, signInWithEmailAndPassword } from '../services/firebase'
  *
  * Se qualquer uma faltar, o acesso automático fica simplesmente desativado.
  */
-export function useAcessoAutomatico(autenticado: boolean, aVerificar: boolean) {
+/** Remove a chave da barra de endereço — não a deixa visível nem no histórico. */
+function limparUrl() {
+  const limpo = new URL(window.location.href)
+  if (!limpo.searchParams.has('acesso')) return
+  limpo.searchParams.delete('acesso')
+  window.history.replaceState({}, '', limpo.pathname + limpo.search + limpo.hash)
+}
+
+export function useAcessoAutomatico(_autenticado: boolean, aVerificar: boolean) {
   const [aEntrar, setAEntrar] = useState(false)
   const [erro, setErro]       = useState<string | null>(null)
 
   useEffect(() => {
-    // Só tenta quando já se sabe que NÃO há sessão iniciada
-    if (aVerificar || autenticado || aEntrar) return
+    // CORRIGIDO 08/08/2026: só atuava quando NÃO havia sessão iniciada. Como o
+    // Firebase mantém a sessão no browser, abrir o link com ?acesso= estando já
+    // autenticado com outra conta não fazia nada — o utilizador continuava com a
+    // conta anterior (e com o menu completo, em vez do reduzido de consulta).
+    // Agora, se a chave for válida e a sessão ativa for de outra conta, troca-se.
+    if (aVerificar || aEntrar) return
 
     const params = new URLSearchParams(window.location.search)
     const chaveRecebida = params.get('acesso')
@@ -58,21 +70,27 @@ export function useAcessoAutomatico(autenticado: boolean, aVerificar: boolean) {
       return
     }
 
+    // Já autenticado com a conta certa? Só limpa o URL e segue.
+    const emailAtual = (auth.currentUser?.email || '').trim().toLowerCase()
+    if (emailAtual === email.trim().toLowerCase()) {
+      limparUrl()
+      return
+    }
+
     setAEntrar(true)
-    signInWithEmailAndPassword(auth, email, password)
-      .then(() => {
-        // Remove a chave da barra de endereço depois de entrar — não a deixa
-        // visível nem no histórico de navegação desta sessão.
-        const limpo = new URL(window.location.href)
-        limpo.searchParams.delete('acesso')
-        window.history.replaceState({}, '', limpo.pathname + limpo.search + limpo.hash)
-      })
+    // Se houver sessão de OUTRA conta, termina-a primeiro
+    const entrar = auth.currentUser
+      ? signOut(auth).then(() => signInWithEmailAndPassword(auth, email, password))
+      : signInWithEmailAndPassword(auth, email, password)
+
+    entrar
+      .then(limparUrl)
       .catch((e) => {
         console.error('[GesWinmax] Acesso automático falhou:', e)
         setErro('Não foi possível entrar automaticamente')
       })
       .finally(() => setAEntrar(false))
-  }, [autenticado, aVerificar, aEntrar])
+  }, [aVerificar, aEntrar])
 
   return { aEntrar, erro }
 }
