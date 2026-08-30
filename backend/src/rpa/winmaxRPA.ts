@@ -43,25 +43,44 @@ const SEL = {
   msgBody:     '#wucMessagePanel1_LabelMessageDiv',
 }
 
-const TIPO_DOC: Record<string, string> = {
-  FAA: '37',  // Fatura A
-  FR:  '55',  // Fatura Recibo
-  FS:  '46',  // Fatura Simplificada
-  FTB: '45',  // Fat Recibo B
-  FRB: '53',  // Fatura Reboque ← confirmado ao vivo 19/06/2026
-  NCC: '40',  // Nota de Crédito
-  GT:  '49',  // Guia de Transporte
-  FO:  '50',  // Folha de Obra
-  GR:  '3',   // Guia de Remessa
-  NBB: '43',  // Nota de Débito
-  ORR: '42',  // Orçamento
-  REE: '35',  // Recibo
-  RC:  '48',  // Recibo IVA Caixa
-  VDD: '33',  // Venda a Dinheiro
-  VDB: '34',  // Venda a Dinheiro B
-  CM:  '59',  // Comprovativo
-  CO:  '56',  // Conta
-}
+/**
+ * Tipos de documento com descrição, para apresentação nas Configurações.
+ *
+ * FONTE ÚNICA (19/08/2026): existiam três listas desalinhadas — esta, os defaults
+ * em routes/config.ts (8 tipos) e os do frontend (6, sem o FRB, que é dos mais
+ * usados). Passa a haver só esta; as outras derivam daqui. Ao acrescentar um tipo
+ * novo, basta acrescentá-lo aqui.
+ *
+ * O `valor` é o value da opção no ddlDocumentType do WinMax4 — confirmados ao vivo.
+ */
+export const TIPOS_DOCUMENTO: Array<{ codigo: string; descricao: string; valor: string }> = [
+  { codigo: 'FAA', descricao: 'Fatura a Clientes',   valor: '37' },
+  { codigo: 'FR',  descricao: 'Fatura Recibo',       valor: '55' },
+  { codigo: 'FS',  descricao: 'Fatura Simplificada', valor: '46' },
+  { codigo: 'FTB', descricao: 'Fat Recibo B',        valor: '45' },
+  { codigo: 'FRB', descricao: 'Fatura Reboque',      valor: '53' },
+  { codigo: 'NCC', descricao: 'Nota de Crédito',     valor: '40' },
+  { codigo: 'NBB', descricao: 'Nota de Débito',      valor: '43' },
+  { codigo: 'GT',  descricao: 'Guia de Transporte',  valor: '49' },
+  { codigo: 'GR',  descricao: 'Guia de Remessa',     valor: '3'  },
+  { codigo: 'FO',  descricao: 'Folha de Obra',       valor: '50' },
+  { codigo: 'ORR', descricao: 'Orçamento',           valor: '42' },
+  { codigo: 'REE', descricao: 'Recibo',              valor: '35' },
+  { codigo: 'RC',  descricao: 'Recibo IVA Caixa',    valor: '48' },
+  { codigo: 'VDD', descricao: 'Venda a Dinheiro',    valor: '33' },
+  { codigo: 'VDB', descricao: 'Venda a Dinheiro B',  valor: '34' },
+  { codigo: 'CM',  descricao: 'Comprovativo',        valor: '59' },
+  { codigo: 'CO',  descricao: 'Conta',               valor: '56' },
+]
+
+/**
+ * Mapa código → valor, DERIVADO de TIPOS_DOCUMENTO.
+ * Antes era uma lista à parte, o que permitia divergir da usada nas Configurações
+ * — foi assim que o FRB acabou por faltar num sítio e existir noutro.
+ */
+const TIPO_DOC: Record<string, string> = Object.fromEntries(
+  TIPOS_DOCUMENTO.map(t => [t.codigo, t.valor])
+)
 
 const MENU = {
   imprimir:            'transactionDocumentsIssueCustomerStandardDocumentPrint',
