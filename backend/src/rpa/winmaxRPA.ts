@@ -156,6 +156,21 @@ export class WinmaxRPA {
    * do job no Firestore, para que o botão "Abortar" na página de Emissão possa
    * interromper um lote a meio sem esperar que termine.
    */
+  /**
+   * Verifica rapidamente se a sessão do WinMax4 ainda está utilizável — isto é,
+   * se o Toolbox tem ícones. Uma verificação de 5 segundos evita gastar 5 minutos
+   * por fatura a procurar atalhos numa sessão que já morreu.
+   */
+  private async sessaoViva(): Promise<boolean> {
+    return this.page!.waitForFunction(
+      () => {
+        const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
+        return (tb?.contentDocument?.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length || 0) > 0
+      }, undefined,
+      { timeout: 5000, polling: 500 }
+    ).then(() => true).catch(() => false)
+  }
+
   private async abortoPedido(): Promise<boolean> {
     if (!this.config.jobId) return false
     try {
@@ -406,6 +421,38 @@ export class WinmaxRPA {
       { id: iframeId, sel: selector },
       { timeout, polling: 500 }
     )
+  }
+
+  /**
+   * Esvazia o painel de mensagens do WinMax4.
+   *
+   * CORRIGIDO 31/08/2026 — CAUSA DO FALSO ERRO NO ARTIGO "TX":
+   * O painel de mensagens está sempre presente no DOM e o WinMax4 NÃO o limpa entre
+   * operações. O código apenas o lia. Resultado: um aviso gerado por uma linha (por
+   * exemplo, um artigo com preço zero, que é perfeitamente legítimo) permanecia no
+   * painel, e a linha SEGUINTE lia essa mensagem antiga e atribuía-a ao seu próprio
+   * artigo — rejeitando um artigo válido.
+   *
+   * Confirmado em produção (31/08, lote de 4 faturas): linha 1 "SERV REB" a 0€,
+   * linha 2 "TX" rejeitada com "Artigo não definido ou inválido". O TX existe e
+   * sempre existiu.
+   *
+   * A "reconfirmação" que existia antes era inútil: relia o MESMO painel 1,5s
+   * depois e, como ninguém o limpava, confirmava o erro falso.
+   *
+   * Limpar antes de cada operação garante que qualquer mensagem lida a seguir
+   * pertence de facto a essa operação.
+   */
+  private async limparPainelMensagens(di: string): Promise<void> {
+    await this.page!.evaluate(({ id, bodySel, panelSel }) => {
+      const f = document.getElementById(id) as HTMLIFrameElement
+      const doc = f?.contentDocument
+      if (!doc) return
+      const body = doc.querySelector(bodySel) as HTMLElement
+      if (body) body.innerText = ''
+      const panel = doc.querySelector(panelSel) as HTMLElement
+      if (panel) panel.style.display = 'none'
+    }, { id: di, bodySel: SEL.msgBody, panelSel: SEL.msgPanel }).catch(() => {})
   }
 
   private async verificarErro(di: string): Promise<string | null> {
@@ -685,6 +732,10 @@ export class WinmaxRPA {
         `Linha ${n} — "${linha.artigo_ref}": iframe do documento desapareceu antes de iniciar a linha (possível timeout de sessão ou popup inesperado do WinMax4)`)
     }
 
+    // Limpa mensagens residuais ANTES de começar — sem isto, um aviso da linha
+    // anterior seria lido como erro desta (ver limparPainelMensagens).
+    await this.limparPainelMensagens(di)
+
     // Clica "Inserir" para abrir o formulário de nova linha
     await this.dismissarOverlayPreso()
     await this.page!.frameLocator('#DocumentIssue_content')
@@ -713,22 +764,28 @@ export class WinmaxRPA {
     ).catch(() => {})
     await this.page!.waitForTimeout(500)
 
+    // CORRIGIDO 31/08/2026: a "reconfirmação" que aqui existia relia o MESMO painel
+    // 1,5s depois. Como nada o limpava, uma mensagem antiga continuava lá e o erro
+    // falso era "confirmado" — foi assim que o artigo TX, válido, foi rejeitado.
+    //
+    // Agora o painel é limpo antes de cada linha (ver limparPainelMensagens), pelo
+    // que uma mensagem encontrada aqui pertence mesmo a este artigo. Além disso,
+    // confirma-se pelo estado real do formulário: se a descrição do artigo ficou
+    // preenchida, o WinMax4 reconheceu-o — independentemente do que diga o painel.
     const erroArtigo = await this.verificarErro(di)
     if (erroArtigo) {
-      // CORRIGIDO 02/07/2026: produção registou "Artigo não definido ou inválido" para o
-      // código TX, que é um artigo válido e existente (confirmado no WinMax4 e via MCP,
-      // reproduzindo a mesma sequência sem erro). O artigo_ref já vem .trim().toUpperCase()
-      // desde emissaoJob.ts, por isso não é problema de dados sujos. A hipótese mais provável
-      // é uma mensagem de validação transitória do WinMax4 (ex: sob latência/carga no Render),
-      // que se resolve sozinha pouco depois. Por isso, reconfirmamos antes de desistir da linha.
-      await this.log(`  ⏳ Possível erro no artigo "${linha.artigo_ref}" — a reconfirmar antes de desistir...`)
-      await this.page!.waitForTimeout(1500)
-      const erroArtigoConfirmado = await this.verificarErro(di)
-      if (erroArtigoConfirmado) {
+      const descricaoPreenchida = await this.evalIn(di,
+        `(document.getElementById('txtArticleDesignation')?.value || '').trim().length > 0`
+      ).catch(() => false) as boolean
+
+      if (descricaoPreenchida) {
+        // O artigo foi reconhecido: a mensagem refere-se a outra coisa (um aviso de
+        // preço, por exemplo). Regista-se, mas não se rejeita a linha.
+        await this.log(`  ℹ️ Artigo "${linha.artigo_ref}" reconhecido (descrição preenchida). Mensagem do WinMax4: "${erroArtigo}"`)
+      } else {
         throw new ErroLinhaArtigo(n, linha.artigo_ref,
-          `Linha ${n} — "${linha.artigo_ref}": ${erroArtigoConfirmado}`)
+          `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
       }
-      await this.log(`  ✅ Falso alarme — mensagem desapareceu, artigo "${linha.artigo_ref}" válido`)
     }
 
     // Aguardar que txtUnitaryPrice esteja enabled (artigo carregado)
@@ -1213,12 +1270,26 @@ export class WinmaxRPA {
       `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
     ).catch(() => '') as string
 
-    // Se não conseguiu do iframe, extrai do nome do PDF
+    // Se não conseguiu do iframe, extrai do nome do PDF.
+    //
+    // CORRIGIDO 31/08/2026: a expressão anterior era `^[A-Z]+_`, pensada para nomes
+    // como "FRB_2026_85". Quando o nome passou a incluir o código do cliente à frente
+    // ("83_FRB_2026_183"), deixou de casar — porque começa por dígitos. O resultado
+    // era um número errado gravado no Histórico: "83/FRB_2026_183" em vez de
+    // "2026/183", e um nome de download com o prefixo duplicado
+    // ("83_FRB_83_FRB_2026_183.pdf", visível nos erros de consola de 31/08).
+    //
+    // Passa a extrair pelo padrão do próprio número — ano_número no fim do nome —
+    // em vez de depender de quantos prefixos existem antes.
     if (!numDoc && localPDF) {
       const nomePDF = path.basename(localPDF, '.pdf')
-      // Remove o prefixo do tipo (ex: FRB_ → 2026_85 → 2026/85)
-      const semTipo = nomePDF.replace(/^[A-Z]+_/, '')
-      numDoc = semTipo.replace('_', '/') // 2026_85 → 2026/85
+      const m = nomePDF.match(/(\d{4})_(\d+)$/)   // ..._2026_183 -> 2026/183
+      if (m) {
+        numDoc = `${m[1]}/${m[2]}`
+      } else {
+        // Sem padrão reconhecível, é preferível não inventar um número.
+        await this.log(`  ⚠️ Não foi possível deduzir o número do documento a partir de "${nomePDF}"`)
+      }
     }
 
     // Renomeia o PDF com o número definitivo (ao gravar só se conhece o previsto).
@@ -1276,13 +1347,21 @@ export class WinmaxRPA {
     const deixarEmAberto = async (motivo: string): Promise<ResultadoFatura> => {
       const numAtribuido = await this.numeroDocumentoAtual()
       await this.log(`  🔓 Documento DEIXADO EM ABERTO no WinMax4${numAtribuido ? ` (nº ${numAtribuido})` : ''} — verificar e terminar manualmente`)
-      // Reiniciar o browser garante que a fatura seguinte arranca de um estado limpo
-      // sem tocar no documento — ao contrário de abandonarDocumento(), que apagava
-      // as linhas já inseridas.
+
+      // CORRIGIDO 31/08/2026: aqui reiniciava-se o browser. Foi má ideia — com um
+      // documento por fechar, o "Terminar sessão" não é alcançável, e o WinMax4
+      // recusa novo login enquanto a sessão anterior estiver ativa. Confirmado em
+      // produção (31/08): o reinício falhou com "Toolbox não carregou após
+      // autenticação" e as DUAS faturas seguintes gastaram 5 minutos cada a
+      // procurar num Toolbox de sessão morta.
+      //
+      // A sessão atual continua viva e funcional — basta sair da listagem para a
+      // fatura seguinte poder abrir um documento novo, sem tocar no que ficou aberto.
       try {
-        await this.reiniciarBrowser()
+        await this.fecharListagem()
+        await this.page!.waitForTimeout(1500)
       } catch (e) {
-        await this.log(`  ⚠️ Falha ao reiniciar sessão: ${e}`)
+        await this.log(`  ⚠️ Não foi possível fechar a listagem: ${e}`)
       }
       return {
         index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
@@ -1356,6 +1435,17 @@ export class WinmaxRPA {
       // por processar (nenhum documento fica a meio por causa disto).
       if (await this.abortoPedido()) {
         await this.log(`\n⛔ ABORTADO pelo utilizador — ${faturas.length - i} fatura(s) por processar`)
+        break
+      }
+
+      // CORRIGIDO 31/08/2026: quando a sessão do WinMax4 morre, o Toolbox fica vazio
+      // e TODAS as faturas seguintes falham — mas cada uma gastava ~5 minutos a
+      // percorrer 11 páginas duas vezes antes de desistir. No lote de 31/08 foram
+      // 20 minutos a bater numa porta fechada, com zero hipóteses de sucesso.
+      // Verifica-se antes de cada fatura; se a sessão caiu, termina já o lote.
+      if (i > 0 && !(await this.sessaoViva())) {
+        await this.log(`\n⛔ SESSÃO DO WINMAX4 PERDIDA — lote interrompido com ${faturas.length - i} fatura(s) por processar.`)
+        await this.log('   Volta a submeter o ficheiro: as faturas já emitidas serão ignoradas pela deteção de duplicados.')
         break
       }
 

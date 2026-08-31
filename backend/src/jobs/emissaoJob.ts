@@ -189,12 +189,23 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
       // sempre FALSO para um URL — logo, sempre que o Storage FUNCIONAVA (o caso
       // normal), o pdf_url ficava gravado a null. Sem ele não há link no Histórico
       // nem download automático depois da emissão.
+      // CORRIGIDO 31/08/2026: o URL apontava diretamente para o Firebase Storage
+      // (https://storage.googleapis.com/...). O browser bloqueava o download por
+      // CORS — o bucket não autoriza pedidos vindos do domínio da aplicação.
+      // Confirmado na consola: "blocked by CORS policy: No
+      // 'Access-Control-Allow-Origin' header is present".
+      //
+      // Passa a apontar para /api/faturas/pdf/..., servido pelo nosso backend a
+      // partir do Storage. Como o pedido passa pelo mesmo domínio (redirect /api/*
+      // do Netlify), não há CORS.
       let pdfUrl: string | null = null
       if (resultado.sucesso && resultado.pdf_url) {
+        const nomeFicheiro = path.basename(resultado.pdf_url)
         if (/^https?:\/\//i.test(resultado.pdf_url)) {
-          pdfUrl = resultado.pdf_url
+          // Está no Storage — servir através do backend
+          pdfUrl = `${backendUrl}/api/faturas/pdf/${jobId}/${encodeURIComponent(nomeFicheiro)}`
         } else if (fs.existsSync(resultado.pdf_url)) {
-          const nomeFicheiro = path.basename(resultado.pdf_url)
+          // Ficou em disco (upload para o Storage falhou) — servir da pasta estática
           pdfUrl = `${backendUrl}/api/pdfs/${jobId}/${encodeURIComponent(nomeFicheiro)}`
         }
       }

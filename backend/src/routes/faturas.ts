@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express'
+import * as admin from 'firebase-admin'
 import { db } from '../services/firebase'
 import { logger } from '../services/logger'
 
@@ -54,6 +55,49 @@ router.delete('/', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error(`❌ Falha ao limpar histórico: ${err}`)
     res.status(500).json({ erro: String(err) })
+  }
+})
+
+// GET /api/faturas/pdf/:jobId/:ficheiro — serve o PDF a partir do Firebase Storage.
+//
+// CORRIGIDO 31/08/2026 — CAUSA DO DOWNLOAD NÃO FUNCIONAR:
+// O frontend ia buscar o PDF diretamente ao Storage
+// (https://storage.googleapis.com/...). O browser bloqueava com:
+//   "blocked by CORS policy: No 'Access-Control-Allow-Origin' header"
+// O ficheiro existe e está público, mas o bucket não autoriza pedidos vindos do
+// domínio da aplicação — e sem CORS o `fetch` falha, logo não há download.
+//
+// Servir o ficheiro por aqui resolve sem depender de configurar CORS no bucket
+// (que exigiria acesso à consola do Google Cloud e tornaria o bucket aberto a
+// origens externas): o pedido passa pelo mesmo domínio da aplicação, através do
+// redirecionamento /api/* do Netlify.
+router.get('/pdf/:jobId/:ficheiro', async (req: Request, res: Response) => {
+  try {
+    const jobId    = req.params.jobId
+    const ficheiro = decodeURIComponent(req.params.ficheiro)
+
+    // Impede que se saia da pasta do job (ex: "../../outro")
+    if (ficheiro.includes('/') || ficheiro.includes('\\') || ficheiro.includes('..')) {
+      return res.status(400).json({ erro: 'nome de ficheiro inválido' })
+    }
+
+    const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || 'geswinmax.firebasestorage.app')
+    const file = bucket.file(`pdfs/${jobId}/${ficheiro}`)
+
+    const [existe] = await file.exists()
+    if (!existe) return res.status(404).json({ erro: 'PDF não encontrado' })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${ficheiro.replace(/[^\w.\-]/g, '_')}"`)
+    file.createReadStream()
+      .on('error', (err) => {
+        logger.error(`❌ Erro ao servir PDF ${ficheiro}: ${err}`)
+        if (!res.headersSent) res.status(500).json({ erro: String(err) })
+      })
+      .pipe(res)
+  } catch (err) {
+    logger.error(`❌ GET /api/faturas/pdf: ${err}`)
+    if (!res.headersSent) res.status(500).json({ erro: String(err) })
   }
 })
 
