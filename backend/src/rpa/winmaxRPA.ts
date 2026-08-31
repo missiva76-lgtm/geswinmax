@@ -1013,6 +1013,31 @@ export class WinmaxRPA {
     await this.log(`  📦 Linha ${n}: ${linha.artigo_ref} x${linha.quantidade} @ ${linha.preco_unitario}€`)
   }
 
+  /**
+   * Fecha o formulário de linha vazia que o WinMax4 deixa aberto após cada inserção.
+   *
+   * CORRIGIDO 31/08/2026: isto só acontecia no fecho do documento — ou seja, os
+   * comentários eram aplicados com uma linha ainda em EDIÇÃO. A grelha fica nesse
+   * estado com uma linha a mais e o WinMax4 nem sempre abre a janela de observações
+   * (falhou em 2 de 5 faturas: "janela não abriu" e "não confirmado"). Fechar a
+   * linha em edição ANTES de aplicar os comentários deixa a grelha num estado
+   * estável, com exatamente as linhas inseridas.
+   */
+  private async cancelarLinhaVazia(): Promise<void> {
+    const di = 'DocumentIssue_content'
+    const temCancelar = await this.evalIn(di,
+      `!!document.getElementById('wucButtonCancelDocumentDetail_linkButton1')`
+    ).catch(() => false) as boolean
+    if (!temCancelar) return
+    await this.dismissarOverlayPreso()
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#wucButtonCancelDocumentDetail_linkButton1')
+      .click()
+      .catch(() => {})
+    await this.page!.waitForTimeout(800)
+    await this.log('  ✖️  Linha vazia cancelada')
+  }
+
   private normalizarComentario(txt: string): string {
     return txt.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
   }
@@ -1056,7 +1081,11 @@ export class WinmaxRPA {
    */
   private async adicionarComentario(comentario: string, indiceLinha: number, tentativa = 1): Promise<boolean> {
     const di = 'DocumentIssue_content'
-    const maxTentativas = 2
+    // 3 tentativas (era 2): no lote de 31/08 falharam 2 de 5 comentários, um por
+    // a janela não abrir e outro por não confirmar. Ambos são intermitentes, não
+    // sistemáticos — a mesma estrutura de fatura funcionou noutras. Uma tentativa
+    // extra, precedida de estabilização do documento, cobre esses casos.
+    const maxTentativas = 3
 
     // CORRIGIDO 04/07/2026: a verificação de existência do botão de comentário era
     // IMEDIATA, sem esperar o WinMax4 desenhar o ícone (aparece só depois de um postback
@@ -1103,7 +1132,8 @@ export class WinmaxRPA {
 
     if (!dialogAbriu) {
       if (tentativa < maxTentativas) {
-        await this.log(`  ⏳ Janela de comentário não abriu (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
+        await this.log(`  ⏳ Janela de comentário não abriu (tentativa ${tentativa}/${maxTentativas}) — a estabilizar e tentar de novo...`)
+        await this.aguardarDocumentoEstavel()
         return this.adicionarComentario(comentario, indiceLinha, tentativa + 1)
       }
       await this.log(`  ❌ Janela de comentário não abriu após ${maxTentativas} tentativas — comentário NÃO aplicado`)
@@ -1125,7 +1155,8 @@ export class WinmaxRPA {
     const confirmado = await this.verificarEReabrirComentario(comentario, indiceLinha)
     if (!confirmado) {
       if (tentativa < maxTentativas) {
-        await this.log(`  ⚠️ Comentário não confirmado após aplicar (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
+        await this.log(`  ⚠️ Comentário não confirmado após aplicar (tentativa ${tentativa}/${maxTentativas}) — a estabilizar e tentar de novo...`)
+        await this.aguardarDocumentoEstavel()
         return this.adicionarComentario(comentario, indiceLinha, tentativa + 1)
       }
       await this.log(`  ❌ Comentário não pôde ser confirmado após ${maxTentativas} tentativas`)
@@ -1329,18 +1360,7 @@ export class WinmaxRPA {
       `document.getElementById('txtDocumentDate')?.value || ''`
     ).catch(() => '') as string
 
-    // Cancela linha de edição vazia se estiver aberta
-    const temCancelar = await this.evalIn(di,
-      `!!document.getElementById('wucButtonCancelDocumentDetail_linkButton1')`
-    ) as boolean
-    if (temCancelar) {
-      await this.dismissarOverlayPreso()
-      await this.page!.frameLocator('#DocumentIssue_content')
-        .locator('#wucButtonCancelDocumentDetail_linkButton1')
-        .click()
-      await this.page!.waitForTimeout(800)
-      await this.log('  ✖️  Linha vazia cancelada')
-    }
+    await this.cancelarLinhaVazia()
 
     // Clica "Terminar" — abre DocumentIssueClose_content com opções de impressão
     await this.page!.waitForFunction(
@@ -1516,6 +1536,32 @@ export class WinmaxRPA {
     const linhasComComentario = fatura.linhas
       .map((linha, idx) => ({ linha, idx }))
       .filter(({ linha }) => linha.comentario?.trim())
+
+    // Fecha a linha em edição antes de contar e de mexer nas observações
+    await this.cancelarLinhaVazia()
+    await this.aguardarDocumentoEstavel()
+
+    // VALIDAÇÃO: o documento tem mesmo todas as linhas do Excel?
+    //
+    // Acrescentado 31/08/2026. Até aqui, uma linha que não entrasse na grelha —
+    // por um recarregamento a meio, um clique perdido, o que fosse — passava
+    // despercebida e o documento era fechado a menos. O contador usa o mesmo
+    // seletor validado pelo diagnóstico (contou corretamente as linhas inseridas).
+    //
+    // Não substitui a validação do TOTAL, que continua por fazer por falta do
+    // identificador do campo no WinMax4 — mas apanha o caso mais grave, que é
+    // faltarem linhas inteiras.
+    const linhasNaGrelha = await this.evalIn('DocumentIssue_content',
+      `document.querySelectorAll('[id^="DeleteCompound"]').length`
+    ).catch(() => -1) as number
+
+    if (linhasNaGrelha >= 0 && linhasNaGrelha !== fatura.linhas.length) {
+      await this.registarDivergencia(
+        `o documento tem ${linhasNaGrelha} linha(s) mas o ficheiro indica ${fatura.linhas.length}`
+      )
+    } else if (linhasNaGrelha >= 0) {
+      await this.log(`  ✅ Validação: ${linhasNaGrelha} linha(s) na grelha, conforme o ficheiro`)
+    }
 
     for (const { linha, idx } of linhasComComentario) {
       const okComentario = await this.adicionarComentario(linha.comentario!, idx)
