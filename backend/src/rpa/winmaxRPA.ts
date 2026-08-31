@@ -1017,7 +1017,7 @@ export class WinmaxRPA {
     return txt.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
   }
 
-  private async verificarEReabrirComentario(comentarioEsperado: string): Promise<boolean> {
+  private async verificarEReabrirComentario(comentarioEsperado: string, indiceLinha: number): Promise<boolean> {
     // Duplo check redundante: reabre a janela de comentário depois de a termos fechado,
     // e confirma que o texto ficou mesmo guardado — em vez de assumir sucesso só porque
     // o clique em "Confirmar" não deu erro visível.
@@ -1025,7 +1025,7 @@ export class WinmaxRPA {
       await this.dismissarOverlayPreso()
       await this.page!.frameLocator('#DocumentIssue_content')
         .locator('input[id^="DetailPropertyRemarks"]')
-        .last()
+        .nth(indiceLinha)
         .click({ timeout: 5000 })
       await this.page!.waitForTimeout(1000)
       const abriu = await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 5000)
@@ -1054,7 +1054,7 @@ export class WinmaxRPA {
    * Aplica o comentário à linha. Devolve `true` se ficou confirmado, `false` caso
    * contrário — quem chama trata um `false` como divergência e impede o fecho.
    */
-  private async adicionarComentario(comentario: string, tentativa = 1): Promise<boolean> {
+  private async adicionarComentario(comentario: string, indiceLinha: number, tentativa = 1): Promise<boolean> {
     const di = 'DocumentIssue_content'
     const maxTentativas = 2
 
@@ -1078,7 +1078,7 @@ export class WinmaxRPA {
       if (tentativa < maxTentativas) {
         await this.log(`  ⏳ Botão de comentário ainda não visível (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
         await this.page!.waitForTimeout(1000)
-        return this.adicionarComentario(comentario, tentativa + 1)
+        return this.adicionarComentario(comentario, indiceLinha, tentativa + 1)
       }
       // CORRIGIDO 08/07/2026: quando o botão nunca aparece mesmo após esperar, pode
       // haver uma mensagem de erro/validação escondida do WinMax4 a bloquear o
@@ -1095,7 +1095,7 @@ export class WinmaxRPA {
 
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('input[id^="DetailPropertyRemarks"]')
-      .last()
+      .nth(indiceLinha)
       .click({ timeout: 10000 })
     await this.page!.waitForTimeout(1500)
     const dialogAbriu = await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
@@ -1104,7 +1104,7 @@ export class WinmaxRPA {
     if (!dialogAbriu) {
       if (tentativa < maxTentativas) {
         await this.log(`  ⏳ Janela de comentário não abriu (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
-        return this.adicionarComentario(comentario, tentativa + 1)
+        return this.adicionarComentario(comentario, indiceLinha, tentativa + 1)
       }
       await this.log(`  ❌ Janela de comentário não abriu após ${maxTentativas} tentativas — comentário NÃO aplicado`)
       return false
@@ -1122,11 +1122,11 @@ export class WinmaxRPA {
     })
     await this.page!.waitForTimeout(1200)
 
-    const confirmado = await this.verificarEReabrirComentario(comentario)
+    const confirmado = await this.verificarEReabrirComentario(comentario, indiceLinha)
     if (!confirmado) {
       if (tentativa < maxTentativas) {
         await this.log(`  ⚠️ Comentário não confirmado após aplicar (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
-        return this.adicionarComentario(comentario, tentativa + 1)
+        return this.adicionarComentario(comentario, indiceLinha, tentativa + 1)
       }
       await this.log(`  ❌ Comentário não pôde ser confirmado após ${maxTentativas} tentativas`)
       return false
@@ -1482,16 +1482,9 @@ export class WinmaxRPA {
       }
       const linha = fatura.linhas[i]
       try {
+        // FASE 1 — só linhas. Os comentários ficam para depois de TODAS estarem
+        // inseridas; ver a nota extensa antes da fase 2.
         await this.adicionarLinhaArtigo(linha, i)
-        if (linha.comentario?.trim()) {
-          const okComentario = await this.adicionarComentario(linha.comentario)
-          // CORRIGIDO 31/08/2026: uma falha ao aplicar o comentário era apenas
-          // registada e o documento seguia para fecho — sem o comentário e sem
-          // ninguém dar por isso. Passa a ser uma divergência que impede o fecho.
-          if (!okComentario) {
-            await this.registarDivergencia(`comentário da linha ${i + 1} (${linha.artigo_ref}) não foi aplicado`)
-          }
-        }
       } catch (err) {
         if (err instanceof ErroLinhaArtigo) {
           errosLinhas.push({ linha: err.linha, artigo_ref: err.artigo_ref, mensagem: err.message })
@@ -1499,6 +1492,36 @@ export class WinmaxRPA {
           return deixarEmAberto(err.message)
         }
         throw err
+      }
+    }
+
+    // FASE 2 — comentários, só depois de TODAS as linhas estarem inseridas.
+    //
+    // CORRIGIDO 31/08/2026 — CAUSA REAL, PROVADA COM SEIS OBSERVAÇÕES:
+    // Aplicar um comentário dispara um recarregamento interno do WinMax4 que repõe
+    // o formulário de introdução de linha. Quando a linha SEGUINTE era iniciada
+    // logo a seguir, o código do artigo era apagado a meio e o WinMax4 respondia
+    // "Artigo não definido ou inválido" — sobre um artigo válido (o "TX").
+    //
+    // A correlação foi perfeita em seis faturas: sempre que o comentário foi
+    // aplicado, a linha seguinte falhou; nas duas em que o comentário falhou, a
+    // linha seguinte passou sem problema. O diagnóstico confirmou o mecanismo:
+    // campo do artigo vazio e preço/quantidade desativados — um formulário acabado
+    // de repor.
+    //
+    // Esperar pela estabilização do documento não bastou. A solução é estrutural:
+    // como o botão de comentário existe POR LINHA na grelha, os comentários podem
+    // ser aplicados no fim, quando já não há mais inserções para estragar. O
+    // recarregamento passa a ser inofensivo.
+    const linhasComComentario = fatura.linhas
+      .map((linha, idx) => ({ linha, idx }))
+      .filter(({ linha }) => linha.comentario?.trim())
+
+    for (const { linha, idx } of linhasComComentario) {
+      const okComentario = await this.adicionarComentario(linha.comentario!, idx)
+      // Uma falha aqui é divergência: o documento não é fechado, fica em aberto.
+      if (!okComentario) {
+        await this.registarDivergencia(`comentário da linha ${idx + 1} (${linha.artigo_ref}) não foi aplicado`)
       }
     }
 
