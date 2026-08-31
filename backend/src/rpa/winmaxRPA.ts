@@ -10,6 +10,7 @@ import { Fatura, ResultadoFatura, ErroLinha } from '../types'
 import { logger } from '../services/logger'
 import { appendJobLog } from '../services/firebase'
 import { acquireBrowserLock } from '../services/browserLock'
+import { clicarToolboxPorTitulo } from './toolboxHelper'
 
 interface RPAConfig {
   winmaxUrl: string
@@ -464,27 +465,26 @@ export class WinmaxRPA {
       await this.page!.waitForTimeout(1500)
     }
 
-    // Garante que o Toolbox está carregado antes de clicar
-    await this.page!.waitForFunction(
-      () => {
-        const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
-        const doc = tb?.contentDocument
-        return !!(doc && doc.readyState === 'complete' &&
-          doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
-      }, undefined,
-      { timeout: 60000, polling: 500 }
+    // CORRIGIDO 30/08/2026: esta procura era feita à mão e só olhava para a página
+    // ATUAL do Toolbox — que tem 11 páginas. Bastava o Toolbox abrir noutra página
+    // para o atalho nunca ser encontrado, e o processo ficava depois 60 segundos à
+    // espera de um iframe que jamais apareceria (confirmado em produção: cinco
+    // faturas seguidas com "NÃO ENCONTRADO" e timeout). Também exigia
+    // correspondência exata do título, sem tolerância a variações.
+    //
+    // Passa a usar o helper partilhado, que percorre as páginas, tem segunda
+    // tentativa quando o Toolbox aparece sem ícones (recarregamento transitório do
+    // iframe) e regista no log os atalhos que encontrou em cada página.
+    const encontrado = await clicarToolboxPorTitulo(
+      this.page!, 'Documentos de clientes', 11, (msg) => this.log(msg)
     )
-
-    // Verifica se o atalho existe e clica
-    const encontrado = await this.page!.evaluate(() => {
-      const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
-      const tbDoc = tb?.contentDocument
-      const divs = Array.from(tbDoc?.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]') || [])
-      const docClientes = divs.find(d => d.getAttribute('title') === 'Documentos de clientes') as HTMLElement | undefined
-      if (docClientes) { docClientes.click(); return true }
-      return false
-    })
     await this.log(`  🖱️ Clique "Documentos de clientes": ${encontrado ? 'OK' : 'NÃO ENCONTRADO'}`)
+
+    if (!encontrado) {
+      // Falhar já, com uma mensagem clara, em vez de esperar 60s por um iframe
+      // que não vai aparecer — era isso que tornava cada fatura falhada tão lenta.
+      throw new Error('atalho "Documentos de clientes" não encontrado no Toolbox do WinMax4')
+    }
 
     // Aguarda o iframe aparecer no DOM
     await this.page!.waitForFunction(
