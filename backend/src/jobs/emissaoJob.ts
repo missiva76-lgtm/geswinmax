@@ -181,10 +181,22 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
     const resultados = await rpa.processarFaturas(faturasParaEmitir, async (pct, resultado) => {
       await updateJob(jobId, { progresso: pct })
 
+      // CORRIGIDO 31/08/2026: `resultado.pdf_url` pode ser DUAS coisas diferentes,
+      // conforme o upload para o Firebase Storage tenha corrido bem ou não:
+      //   • sucesso  -> URL público https://storage.googleapis.com/...
+      //   • falha    -> caminho local em disco (/opt/render/.../ficheiro.pdf)
+      // O código anterior fazia apenas `fs.existsSync(resultado.pdf_url)`, que dá
+      // sempre FALSO para um URL — logo, sempre que o Storage FUNCIONAVA (o caso
+      // normal), o pdf_url ficava gravado a null. Sem ele não há link no Histórico
+      // nem download automático depois da emissão.
       let pdfUrl: string | null = null
-      if (resultado.sucesso && resultado.pdf_url && fs.existsSync(resultado.pdf_url)) {
-        const nomeFicheiro = path.basename(resultado.pdf_url)
-        pdfUrl = `${backendUrl}/api/pdfs/${jobId}/${encodeURIComponent(nomeFicheiro)}`
+      if (resultado.sucesso && resultado.pdf_url) {
+        if (/^https?:\/\//i.test(resultado.pdf_url)) {
+          pdfUrl = resultado.pdf_url
+        } else if (fs.existsSync(resultado.pdf_url)) {
+          const nomeFicheiro = path.basename(resultado.pdf_url)
+          pdfUrl = `${backendUrl}/api/pdfs/${jobId}/${encodeURIComponent(nomeFicheiro)}`
+        }
       }
 
       await db().collection('faturas').doc().set({

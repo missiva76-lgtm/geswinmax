@@ -182,6 +182,52 @@ export class WinmaxRPA {
     this.releaseLock = null
   }
 
+  /**
+   * Fecha o browser e abre outro, mantendo o semáforo já adquirido.
+   *
+   * CORRIGIDO 31/08/2026: a recuperação após uma falha no fecho de documento fazia
+   * apenas novo login na MESMA sessão. Não funciona — o WinMax4 mantém a sessão
+   * anterior ativa e devolve sempre o ecrã de autenticação, sem avançar (mesmo
+   * comportamento já observado nas exportações de compras em julho). O resultado
+   * era pior do que o problema original: o login falhava por timeout, o Toolbox
+   * ficava vazio, e TODAS as faturas seguintes do lote falhavam em cadeia.
+   *
+   * Um browser novo elimina o estado corrompido de raiz. Antes de fechar, tenta-se
+   * terminar a sessão no WinMax4 para libertar o posto de licença — se não for
+   * possível (a página pode estar num estado impossível), segue-se na mesma.
+   */
+  private async reiniciarBrowser(): Promise<void> {
+    try {
+      const saiu = await clicarToolboxPorTitulo(this.page!, 'Terminar sessão', 11)
+      if (saiu) await this.page!.waitForTimeout(2000)
+    } catch { /* não crítico — o objetivo é só libertar o posto */ }
+
+    await this.browser?.close().catch(() => {})
+    this.browser = null
+    this.context = null
+    this.page = null
+
+    this.browser = await chromium.launch({
+      headless: true,
+      slowMo: 40,
+      channel: undefined,
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+      args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    })
+    this.context = await this.browser.newContext({
+      locale: 'pt-PT',
+      timezoneId: 'Europe/Lisbon',
+      acceptDownloads: true,
+      storageState: { cookies: [], origins: [] },
+    })
+    this.page = await this.context.newPage()
+    this.page.on('dialog', async (dialog) => {
+      await this.log(`  🔔 Diálogo nativo do browser: [${dialog.type()}] "${dialog.message()}" — a aceitar`)
+      await dialog.accept().catch(() => {})
+    })
+    await this.login()
+  }
+
   async login(): Promise<void> {
     // WinMax4 abre no MainPage.aspx com iframe UserAuthentication_content
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${this.config.companyCode}`
@@ -444,12 +490,13 @@ export class WinmaxRPA {
     // Nestes casos, recarrega-se a página e faz-se login de novo, em vez de apenas
     // tentar abandonar o documento — mais lento, mas garante um estado limpo.
     if (this.falhaDuranteFecho) {
-      await this.log('  🔄 A fatura anterior falhou durante o fecho do documento — a recarregar sessão para garantir estado limpo...')
+      await this.log('  🔄 A fatura anterior falhou durante o fecho — a reiniciar o browser para garantir estado limpo...')
       this.falhaDuranteFecho = false
       try {
-        await this.login()
+        await this.reiniciarBrowser()
+        await this.log('  ✅ Sessão reiniciada com browser novo')
       } catch (e) {
-        await this.log(`  ⚠️ Falha ao recarregar sessão: ${e} — a tentar recuperação normal`)
+        await this.log(`  ⚠️ Falha ao reiniciar a sessão: ${e} — a tentar recuperação normal`)
       }
     }
 
