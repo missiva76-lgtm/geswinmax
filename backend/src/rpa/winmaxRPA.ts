@@ -443,6 +443,49 @@ export class WinmaxRPA {
    * Limpar antes de cada operação garante que qualquer mensagem lida a seguir
    * pertence de facto a essa operação.
    */
+  /**
+   * Captura o estado real do formulário quando um artigo válido é rejeitado.
+   * Guarda uma screenshot acessível por URL e regista o conteúdo dos campos —
+   * a mesma abordagem que revelou, em julho, que o Toolbox vazio se devia ao
+   * utilizador errado nas Configurações.
+   */
+  private async diagnosticarLinha(di: string, artigoRef: string, n: number): Promise<void> {
+    try {
+      const estado = await this.page!.evaluate((id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const doc = f?.contentDocument
+        if (!doc) return { erro: 'iframe do documento inacessível' }
+        const val = (idCampo: string) => {
+          const el = doc.getElementById(idCampo) as HTMLInputElement | null
+          return el ? { valor: el.value, desativado: el.disabled, visivel: el.offsetParent !== null } : null
+        }
+        // Alguma janela/modal por cima a bloquear a interação?
+        const modais = Array.from(doc.querySelectorAll('div[id*="odal"], div[id*="opup"], div[id*="verlay"]'))
+          .filter(e => (e as HTMLElement).offsetParent !== null)
+          .map(e => e.id)
+        return {
+          artigoCodigo:    val('txtArticleCode'),
+          artigoDescricao: val('txtArticleDesignation'),
+          preco:           val('txtUnitaryPrice'),
+          quantidade:      val('txtQuantity'),
+          painelMensagem:  (doc.querySelector('#wucMessagePanel1_LabelMessageDiv') as HTMLElement)?.innerText?.trim() || '',
+          modaisVisiveis:  modais,
+          totalLinhasGrelha: doc.querySelectorAll('[id^="DeleteCompound"]').length,
+        }
+      }, di)
+
+      await this.log(`  🔬 DIAGNÓSTICO linha ${n} ("${artigoRef}"): ${JSON.stringify(estado)}`)
+
+      const pastaDebug = path.join(process.cwd(), 'pdfs', 'debug')
+      fs.mkdirSync(pastaDebug, { recursive: true })
+      const nomeFicheiro = `linha-${artigoRef.replace(/[^\w]/g, '_')}-${Date.now()}.png`
+      await this.page!.screenshot({ path: path.join(pastaDebug, nomeFicheiro), fullPage: true })
+      await this.log(`  📸 Screenshot: /api/pdfs/debug/${nomeFicheiro}`)
+    } catch (e) {
+      await this.log(`  ⚠️ Não foi possível recolher diagnóstico: ${e}`)
+    }
+  }
+
   private async limparPainelMensagens(di: string): Promise<void> {
     await this.page!.evaluate(({ id, bodySel, panelSel }) => {
       const f = document.getElementById(id) as HTMLIFrameElement
@@ -783,6 +826,14 @@ export class WinmaxRPA {
         // preço, por exemplo). Regista-se, mas não se rejeita a linha.
         await this.log(`  ℹ️ Artigo "${linha.artigo_ref}" reconhecido (descrição preenchida). Mensagem do WinMax4: "${erroArtigo}"`)
       } else {
+        // DIAGNÓSTICO 31/08/2026: o artigo "TX" existe e é válido, mas é rejeitado
+        // de forma reprodutível quando a linha ANTERIOR tem preço 0 e um comentário
+        // multilinha. Limpar o painel de mensagens não resolveu, logo a mensagem não
+        // é residual — algo impede mesmo o WinMax4 de reconhecer o artigo.
+        //
+        // Sem ver o ecrã nesse instante, qualquer correção seria adivinhação. Captura
+        // aqui o estado real: screenshot e conteúdo dos campos do formulário.
+        await this.diagnosticarLinha(di, linha.artigo_ref, n)
         throw new ErroLinhaArtigo(n, linha.artigo_ref,
           `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
       }

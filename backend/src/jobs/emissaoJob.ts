@@ -176,7 +176,6 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
     await rpa.iniciar()
     await rpa.login()
 
-    const backendUrl = process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'
 
     const resultados = await rpa.processarFaturas(faturasParaEmitir, async (pct, resultado) => {
       await updateJob(jobId, { progresso: pct })
@@ -198,15 +197,25 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
       // Passa a apontar para /api/faturas/pdf/..., servido pelo nosso backend a
       // partir do Storage. Como o pedido passa pelo mesmo domínio (redirect /api/*
       // do Netlify), não há CORS.
+      // CORRIGIDO 31/08/2026 (2ª causa do download não funcionar):
+      // O URL era montado com `process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'`
+      // — e esse valor por omissão está ERRADO: o backend real é
+      // geswinmax-backend-8oo6.onrender.com. Sem a variável definida no Render, o
+      // pdf_url apontava para um endereço inexistente.
+      //
+      // Passa a guardar-se um caminho RELATIVO. O frontend chama /api/... e o
+      // Netlify reencaminha para o backend — deixa de haver dependência de
+      // variáveis de ambiente ou de saber o nome do serviço, e resolve também o
+      // CORS (mesmo domínio).
       let pdfUrl: string | null = null
       if (resultado.sucesso && resultado.pdf_url) {
         const nomeFicheiro = path.basename(resultado.pdf_url)
         if (/^https?:\/\//i.test(resultado.pdf_url)) {
-          // Está no Storage — servir através do backend
-          pdfUrl = `${backendUrl}/api/faturas/pdf/${jobId}/${encodeURIComponent(nomeFicheiro)}`
+          // Está no Storage — servido pelo backend, sem CORS
+          pdfUrl = `/api/faturas/pdf/${jobId}/${encodeURIComponent(nomeFicheiro)}`
         } else if (fs.existsSync(resultado.pdf_url)) {
-          // Ficou em disco (upload para o Storage falhou) — servir da pasta estática
-          pdfUrl = `${backendUrl}/api/pdfs/${jobId}/${encodeURIComponent(nomeFicheiro)}`
+          // Ficou em disco (upload para o Storage falhou) — pasta estática
+          pdfUrl = `/api/pdfs/${jobId}/${encodeURIComponent(nomeFicheiro)}`
         }
       }
 
