@@ -27,6 +27,8 @@ export interface ResultadoFatura {
   cliente_nome: string
   tipo_documento: string
   sucesso: boolean
+  /** Documento criado no WinMax4 mas NÃO fechado — requer verificação manual. */
+  em_aberto?: boolean
   numero_documento?: string
   data_documento?: string
   pdf_url?: string

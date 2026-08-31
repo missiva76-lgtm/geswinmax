@@ -34,6 +34,12 @@ export async function getJob(jobId: string) {
   return res.json()
 }
 
+export async function abortarJob(jobId: string): Promise<{ ok: boolean }> {
+  const res = await fetchWithRetry(`${API}/jobs/${jobId}/abortar`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 export async function getJobs() {
   try {
     const res = await fetchWithRetry(`${API}/jobs`)

@@ -210,6 +210,9 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
         data_documento:   resultado.data_documento || null,
         pdf_url:          pdfUrl,
         sucesso:          resultado.sucesso,
+        // Documento criado no WinMax4 mas deliberadamente NÃO fechado (erro ou
+        // divergência) — fica à espera de verificação e fecho manual.
+        em_aberto:        resultado.em_aberto === true,
         total_linhas:     resultado.total_linhas,
         linhas_ok:        resultado.linhas_ok,
         erro:             resultado.erro || null,

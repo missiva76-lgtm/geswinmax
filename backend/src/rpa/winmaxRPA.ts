@@ -8,7 +8,7 @@ import * as fs from 'fs'
 import { Browser, BrowserContext, Page, chromium } from 'playwright'
 import { Fatura, ResultadoFatura, ErroLinha } from '../types'
 import { logger } from '../services/logger'
-import { appendJobLog } from '../services/firebase'
+import { appendJobLog, db } from '../services/firebase'
 import { acquireBrowserLock } from '../services/browserLock'
 import { clicarToolboxPorTitulo } from './toolboxHelper'
 
@@ -128,6 +128,43 @@ export class WinmaxRPA {
   // imprimirEGuardarPDF. Usado por abrirNovaFatura() para decidir se precisa de uma
   // recuperação mais agressiva (recarregar a página) em vez do abandono normal.
   private falhaDuranteFecho = false
+
+  /**
+   * REGRA CENTRAL (31/08/2026, definida pelo Carlos):
+   * Perante QUALQUER erro, timeout ou divergência, o documento NUNCA é fechado.
+   * Fica em aberto no WinMax4 para verificação e fecho manual, e o robô passa à
+   * fatura seguinte.
+   *
+   * Antes fazia-se o oposto: em erro de linha chamava-se `abandonarDocumento()`,
+   * que APAGA as linhas já inseridas e descarta o trabalho. E uma falha ao aplicar
+   * um comentário nem sequer impedia o fecho — o documento seguia fechado, sem o
+   * comentário, sem ninguém dar por isso.
+   *
+   * Cada divergência detetada é acumulada aqui. Se houver alguma, `terminarDocumento`
+   * não é chamado.
+   */
+  private divergencias: string[] = []
+
+  /** Regista uma divergência — impede o fecho do documento atual. */
+  private async registarDivergencia(msg: string): Promise<void> {
+    this.divergencias.push(msg)
+    await this.log(`  ⚠️ DIVERGÊNCIA: ${msg}`)
+  }
+
+  /**
+   * Sinal de aborto — consultado entre faturas e entre linhas. É lido do documento
+   * do job no Firestore, para que o botão "Abortar" na página de Emissão possa
+   * interromper um lote a meio sem esperar que termine.
+   */
+  private async abortoPedido(): Promise<boolean> {
+    if (!this.config.jobId) return false
+    try {
+      const doc = await db().collection('jobs').doc(this.config.jobId).get()
+      return doc.data()?.abortar === true
+    } catch {
+      return false // falha a consultar não deve interromper o processo
+    }
+  }
 
   constructor(config: RPAConfig) { this.config = config }
 
@@ -507,9 +544,14 @@ export class WinmaxRPA {
     }).catch(() => false)
 
     if (documentoAberto) {
-      await this.log('  ⚠️ Documento aberto detetado — a abandonar antes de continuar...')
-      await this.abandonarDocumento()
-      await this.page!.waitForTimeout(1500)
+      // CORRIGIDO 31/08/2026: aqui chamava-se `abandonarDocumento()`, que APAGA as
+      // linhas do documento encontrado. Isso entra em conflito direto com a regra
+      // de deixar documentos em aberto para verificação manual — um documento
+      // deixado de propósito na fatura anterior seria destruído pela seguinte.
+      // Reiniciar o browser deixa o documento intacto no WinMax4.
+      await this.log('  ⚠️ Documento aberto detetado — a reiniciar sessão SEM lhe tocar (fica para verificação manual)...')
+      await this.reiniciarBrowser()
+      await this.page!.waitForTimeout(1000)
     }
 
     // CORRIGIDO 30/08/2026: esta procura era feita à mão e só olhava para a página
@@ -567,9 +609,10 @@ export class WinmaxRPA {
       di,
       { timeout: 30000, polling: 500 }
     ).catch(async () => {
-      await this.log('  ⚠️ ddlDocumentType ainda disabled — a tentar fechar documento aberto...')
-      await this.abandonarDocumento()
-      await this.page!.waitForTimeout(2000)
+      // Ver nota acima: não se apaga o documento encontrado — reinicia-se a sessão.
+      await this.log('  ⚠️ ddlDocumentType ainda disabled — a reiniciar sessão SEM tocar no documento aberto...')
+      await this.reiniciarBrowser()
+      await this.page!.waitForTimeout(1000)
       await this.abrirNovaFatura()
       // Segunda tentativa de aguardar enabled
       await this.page!.waitForFunction(
@@ -889,7 +932,11 @@ export class WinmaxRPA {
     }
   }
 
-  private async adicionarComentario(comentario: string, tentativa = 1): Promise<void> {
+  /**
+   * Aplica o comentário à linha. Devolve `true` se ficou confirmado, `false` caso
+   * contrário — quem chama trata um `false` como divergência e impede o fecho.
+   */
+  private async adicionarComentario(comentario: string, tentativa = 1): Promise<boolean> {
     const di = 'DocumentIssue_content'
     const maxTentativas = 2
 
@@ -921,7 +968,7 @@ export class WinmaxRPA {
       // estávamos a verificar neste ponto. Log-a para diagnóstico, sem interromper.
       const erroOculto = await this.verificarErro(di)
       await this.log(`  ⚠️ Artigo sem textarea de comentário (confirmado após espera) — comentário NÃO aplicado${erroOculto ? ` | Mensagem WinMax4: "${erroOculto}"` : ''}`)
-      return
+      return false
     }
 
     // Força a ocultação do overlay em vez de apenas esperar que desapareça sozinho —
@@ -942,7 +989,7 @@ export class WinmaxRPA {
         return this.adicionarComentario(comentario, tentativa + 1)
       }
       await this.log(`  ❌ Janela de comentário não abriu após ${maxTentativas} tentativas — comentário NÃO aplicado`)
-      return
+      return false
     }
 
     await this.page!.evaluate(({ txt }) => {
@@ -964,10 +1011,11 @@ export class WinmaxRPA {
         return this.adicionarComentario(comentario, tentativa + 1)
       }
       await this.log(`  ❌ Comentário não pôde ser confirmado após ${maxTentativas} tentativas`)
-      return
+      return false
     }
 
     await this.log('  💬 Comentário adicionado e confirmado')
+    return true
   }
 
   private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = '', clienteCodigo = ''): Promise<string> {
@@ -1199,34 +1247,88 @@ export class WinmaxRPA {
     return { numDoc: numDoc || 'EMITIDO', localPDF: caminhoFinal, dataDocumento }
   }
 
+  /**
+   * Lê o número já atribuído ao documento em edição, se existir.
+   * Serve para o utilizador saber exatamente qual documento ficou em aberto no
+   * WinMax4 e o poder localizar para terminar à mão.
+   */
+  private async numeroDocumentoAtual(): Promise<string | null> {
+    try {
+      const num = await this.evalIn('DocumentIssue_content',
+        `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
+      ) as string
+      if (num) return num
+      const previsto = await this.evalIn('DocumentIssue_content',
+        `document.getElementById('lblNextDocumentNumber')?.innerText?.replace(/[()]/g,'').trim() || ''`
+      ) as string
+      return previsto || null
+    } catch {
+      return null
+    }
+  }
+
   async criarFatura(fatura: Fatura): Promise<ResultadoFatura> {
     const inicio = Date.now()
     const errosLinhas: ErroLinha[] = []
+    this.divergencias = []
+
+    /** Sai do documento SEM o fechar e SEM apagar nada — fica em aberto no WinMax4. */
+    const deixarEmAberto = async (motivo: string): Promise<ResultadoFatura> => {
+      const numAtribuido = await this.numeroDocumentoAtual()
+      await this.log(`  🔓 Documento DEIXADO EM ABERTO no WinMax4${numAtribuido ? ` (nº ${numAtribuido})` : ''} — verificar e terminar manualmente`)
+      // Reiniciar o browser garante que a fatura seguinte arranca de um estado limpo
+      // sem tocar no documento — ao contrário de abandonarDocumento(), que apagava
+      // as linhas já inseridas.
+      try {
+        await this.reiniciarBrowser()
+      } catch (e) {
+        await this.log(`  ⚠️ Falha ao reiniciar sessão: ${e}`)
+      }
+      return {
+        index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
+        tipo_documento: fatura.tipo_documento, sucesso: false,
+        numero_documento: numAtribuido || undefined,
+        em_aberto: true,
+        total_linhas: fatura.linhas.length, linhas_ok: errosLinhas.length ? fatura.linhas.length - errosLinhas.length : fatura.linhas.length,
+        erros_linhas: errosLinhas,
+        erro: `${motivo} — documento deixado EM ABERTO para verificação manual`,
+        duracao_ms: Date.now() - inicio,
+      }
+    }
 
     await this.abrirNovaFatura()
     await this.preencherCabecalho(fatura)
     await this.log(`  📋 ${fatura.linhas.length} linha(s)`)
 
     for (let i = 0; i < fatura.linhas.length; i++) {
+      if (await this.abortoPedido()) {
+        return deixarEmAberto('Aborto pedido pelo utilizador a meio das linhas')
+      }
       const linha = fatura.linhas[i]
       try {
         await this.adicionarLinhaArtigo(linha, i)
-        if (linha.comentario?.trim()) await this.adicionarComentario(linha.comentario)
+        if (linha.comentario?.trim()) {
+          const okComentario = await this.adicionarComentario(linha.comentario)
+          // CORRIGIDO 31/08/2026: uma falha ao aplicar o comentário era apenas
+          // registada e o documento seguia para fecho — sem o comentário e sem
+          // ninguém dar por isso. Passa a ser uma divergência que impede o fecho.
+          if (!okComentario) {
+            await this.registarDivergencia(`comentário da linha ${i + 1} (${linha.artigo_ref}) não foi aplicado`)
+          }
+        }
       } catch (err) {
         if (err instanceof ErroLinhaArtigo) {
           errosLinhas.push({ linha: err.linha, artigo_ref: err.artigo_ref, mensagem: err.message })
           await this.log(`  ❌ ${err.message}`)
-          await this.log('  ⛔ A abandonar documento')
-          await this.abandonarDocumento()
-          return {
-            index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
-            tipo_documento: fatura.tipo_documento, sucesso: false,
-            total_linhas: fatura.linhas.length, linhas_ok: i,
-            erros_linhas: errosLinhas, erro: err.message, duracao_ms: Date.now() - inicio,
-          }
+          return deixarEmAberto(err.message)
         }
         throw err
       }
+    }
+
+    // Nada é fechado enquanto houver divergências por resolver.
+    if (this.divergencias.length > 0) {
+      return deixarEmAberto(`${this.divergencias.length} divergência(s): ${this.divergencias.join('; ')}`)
     }
 
     const { numDoc, localPDF, dataDocumento } = await this.terminarDocumento(fatura)
@@ -1250,6 +1352,13 @@ export class WinmaxRPA {
     await this.log(`\n📋 ${faturas.length} fatura(s)`)
 
     for (let i = 0; i < faturas.length; i++) {
+      // Aborto pedido pelo utilizador — para entre faturas, deixando as restantes
+      // por processar (nenhum documento fica a meio por causa disto).
+      if (await this.abortoPedido()) {
+        await this.log(`\n⛔ ABORTADO pelo utilizador — ${faturas.length - i} fatura(s) por processar`)
+        break
+      }
+
       const fatura = faturas[i]
       await this.log(`\n[${i+1}/${faturas.length}] ${fatura.cliente_nome} | ${fatura.tipo_documento}`)
 

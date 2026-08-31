@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Upload, FileSpreadsheet, CheckCircle, XCircle, Loader2, ExternalLink, Download } from 'lucide-react'
-import { uploadExcel, ServerWakingError } from '../services/api'
+import { Upload, FileSpreadsheet, CheckCircle, XCircle, Loader2, ExternalLink, Download, StopCircle, FileText, AlertTriangle } from 'lucide-react'
+import { abortarJob, uploadExcel, ServerWakingError } from '../services/api'
 import { useJob } from '../hooks/useJob'
 import { FaturaResultado } from '../types'
 import ServerWakingBanner from '../components/ServerWakingBanner'
@@ -31,6 +31,45 @@ export default function Emissao() {
   const [ultimoFicheiro, setUltimoFicheiro] = useState<File | null>(null)
   const job = useJob(jobId)
   const logRef = useRef<HTMLDivElement>(null)
+  const [aAbortar, setAAbortar] = useState(false)
+
+  /** Pede a interrupção do lote em curso. O RPA para na próxima verificação. */
+  const abortar = async () => {
+    if (!job?.id) return
+    if (!confirm('Abortar a emissão em curso?\n\nO documento que estiver a ser criado fica EM ABERTO no WinMax4 para verificares e terminares manualmente. As faturas seguintes não serão processadas.')) return
+    setAAbortar(true)
+    try { await abortarJob(job.id) } catch (e: any) { alert(`Não foi possível abortar: ${e.message}`) }
+  }
+
+  /** Descarrega o log completo da emissão, para análise ou partilha. */
+  const descarregarLog = () => {
+    if (!job?.log?.length) return
+    const cabecalho = [
+      `GesWinmax — log da emissão`,
+      `Job: ${job.id}`,
+      `Estado: ${job.estado}`,
+      job.resultado ? `Resultado: ${job.resultado.emitidas} emitidas, ${job.resultado.erros} com erro` : '',
+      `Exportado em: ${new Date().toLocaleString('pt-PT')}`,
+      '='.repeat(70), '',
+    ].filter(Boolean).join('\n')
+    const blob = new Blob([cabecalho + job.log.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `emissao_${job.id}_${new Date().toISOString().slice(0,10)}.txt`
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const copiarLog = async () => {
+    if (!job?.log?.length) return
+    try {
+      await navigator.clipboard.writeText(job.log.join('\n'))
+      alert('Log copiado para a área de transferência')
+    } catch {
+      alert('Não foi possível copiar — usa o botão de descarregar')
+    }
+  }
 
   // Scroll automático para a última linha do log sempre que chega nova informação —
   // sem isto, com a caixa maior (200 linhas visíveis) seria preciso arrastar manualmente
@@ -263,7 +302,29 @@ export default function Emissao() {
 
           {/* Log */}
           <div className="px-5 py-3 border-b border-gray-50">
-            <p className="text-xs font-medium text-gray-500 mb-2">Log</p>
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+              <p className="text-xs font-medium text-gray-500">Log</p>
+              <div className="flex gap-2">
+                {job.estado === 'ativo' && (
+                  <button onClick={abortar} disabled={aAbortar}
+                    className="flex items-center gap-1 text-xs px-2.5 py-1 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50">
+                    <StopCircle size={12}/> {aAbortar ? 'A abortar...' : 'Abortar'}
+                  </button>
+                )}
+                {job.log?.length > 0 && (
+                  <>
+                    <button onClick={copiarLog}
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50">
+                      <FileText size={12}/> Copiar log
+                    </button>
+                    <button onClick={descarregarLog}
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50">
+                      <Download size={12}/> Descarregar log
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
             <div ref={logRef} className="bg-gray-900 rounded-lg p-3 h-96 overflow-y-auto font-mono text-xs">
               {job.log.slice(-200).map((linha, i) => (
                 <div key={i} className={
@@ -301,11 +362,21 @@ export default function Emissao() {
                 ))}
                 {comErro.map((f, i) => (
                   <div key={i} className="flex items-start gap-3 text-sm py-2 border-b border-gray-50">
-                    <XCircle size={14} className="text-red-500 shrink-0 mt-0.5"/>
+                    {/* Um documento deixado EM ABERTO não é o mesmo que uma falha
+                        sem consequências: existe no WinMax4 e precisa de ser
+                        verificado e terminado à mão. Distingue-se visualmente. */}
+                    {f.em_aberto
+                      ? <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5"/>
+                      : <XCircle size={14} className="text-red-500 shrink-0 mt-0.5"/>}
                     <div className="min-w-0">
                       <span className="font-medium text-gray-800">{f.cliente_nome}</span>
                       <span className="text-xs text-gray-400 ml-2">({f.fatura_id} · {f.tipo_documento})</span>
-                      <p className="text-xs text-red-500 mt-0.5 truncate">{f.erro}</p>
+                      {f.em_aberto && (
+                        <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium">
+                          EM ABERTO no WinMax4{f.numero_documento ? ` · nº ${f.numero_documento}` : ''} — terminar manualmente
+                        </span>
+                      )}
+                      <p className={`text-xs mt-0.5 ${f.em_aberto ? 'text-amber-600' : 'text-red-500'}`}>{f.erro}</p>
                       {f.erros_linhas?.map((e, j) => (
                         <p key={j} className="text-xs text-red-400 mt-0.5">
                           Linha {e.linha} [{e.artigo_ref}]: {e.mensagem}
