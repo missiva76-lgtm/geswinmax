@@ -465,7 +465,11 @@ export class WinmaxRPA {
           .map(e => e.id)
         return {
           artigoCodigo:    val('txtArticleCode'),
-          artigoDescricao: val('txtArticleDesignation'),
+          // Ambos os nomes: `txtArticleDesignation` não existe (devolveu null no
+          // diagnóstico de 31/08); a tabela SEL indica `txtDesignation`. Registar
+          // os dois evita voltar a esperar por um elemento inexistente.
+          artigoDescricao:    val('txtDesignation'),
+          artigoDescricaoAlt: val('txtArticleDesignation'),
           preco:           val('txtUnitaryPrice'),
           quantidade:      val('txtQuantity'),
           painelMensagem:  (doc.querySelector('#wucMessagePanel1_LabelMessageDiv') as HTMLElement)?.innerText?.trim() || '',
@@ -795,17 +799,25 @@ export class WinmaxRPA {
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#txtArticleCode')
       .press('Tab')
-    // Aguardar que o artigo carregue — pelo menos a descrição deve ficar preenchida
-    await this.page!.waitForFunction(
+    // CORRIGIDO 31/08/2026: esperava-se por `txtArticleDesignation` — um elemento que
+    // NÃO EXISTE. O diagnóstico devolveu `null` para ele (a tabela SEL diz
+    // `txtDesignation`). Como a espera tinha `.catch(() => {})`, falhava em silêncio
+    // e desperdiçava os 15 segundos completos em CADA linha, sem que ninguém desse
+    // por isso — é a explicação dos ~17s entre linhas nos logs.
+    //
+    // O sinal fiável, revelado pelo próprio diagnóstico, é outro: enquanto o artigo
+    // não é reconhecido, os campos de preço e quantidade estão DESATIVADOS. Ficam
+    // ativos assim que o WinMax4 o aceita — não depende de saber o id da descrição.
+    const artigoReconhecido = await this.page!.waitForFunction(
       (id: string) => {
         const f = document.getElementById(id) as HTMLIFrameElement
-        const desc = f?.contentDocument?.getElementById('txtArticleDesignation') as HTMLInputElement
-        return desc && desc.value && desc.value.length > 0
+        const preco = f?.contentDocument?.getElementById('txtUnitaryPrice') as HTMLInputElement
+        return !!preco && !preco.disabled
       },
       di,
       { timeout: 15000, polling: 300 }
-    ).catch(() => {})
-    await this.page!.waitForTimeout(500)
+    ).then(() => true).catch(() => false)
+    await this.page!.waitForTimeout(300)
 
     // CORRIGIDO 31/08/2026: a "reconfirmação" que aqui existia relia o MESMO painel
     // 1,5s depois. Como nada o limpava, uma mensagem antiga continuava lá e o erro
@@ -817,11 +829,9 @@ export class WinmaxRPA {
     // preenchida, o WinMax4 reconheceu-o — independentemente do que diga o painel.
     const erroArtigo = await this.verificarErro(di)
     if (erroArtigo) {
-      const descricaoPreenchida = await this.evalIn(di,
-        `(document.getElementById('txtArticleDesignation')?.value || '').trim().length > 0`
-      ).catch(() => false) as boolean
-
-      if (descricaoPreenchida) {
+      // Usa o mesmo sinal fiável da espera acima: se o preço ficou ativo, o WinMax4
+      // reconheceu o artigo — independentemente do que diga o painel de mensagens.
+      if (artigoReconhecido) {
         // O artigo foi reconhecido: a mensagem refere-se a outra coisa (um aviso de
         // preço, por exemplo). Regista-se, mas não se rejeita a linha.
         await this.log(`  ℹ️ Artigo "${linha.artigo_ref}" reconhecido (descrição preenchida). Mensagem do WinMax4: "${erroArtigo}"`)
@@ -1123,7 +1133,43 @@ export class WinmaxRPA {
     }
 
     await this.log('  💬 Comentário adicionado e confirmado')
+
+    // CORRIGIDO 31/08/2026 — CAUSA REAL DO FALSO ERRO NO ARTIGO SEGUINTE:
+    // Confirmar o comentário dispara um postback ASP.NET no documento. Se a linha
+    // seguinte for iniciada antes de esse postback terminar, o formulário é REPOSTO
+    // a meio da introdução: o código do artigo já escrito é apagado e os campos de
+    // preço/quantidade voltam a desativados. O WinMax4 responde então "Artigo não
+    // definido ou inválido" — sobre um artigo perfeitamente válido.
+    //
+    // Provado pelos dados de 31/08 (lote de 6): nas TRÊS faturas em que o comentário
+    // foi aplicado, a linha seguinte ("TX") falhou. Na única em que o comentário
+    // FALHOU, a linha seguinte funcionou. Correlação perfeita.
+    //
+    // Confirmado também pelo diagnóstico: campo do artigo vazio, preço e quantidade
+    // desativados — o estado exato de um formulário acabado de repor.
+    await this.aguardarDocumentoEstavel()
     return true
+  }
+
+  /**
+   * Espera que o iframe do documento fique estável após um postback.
+   * Considera-se estável quando o botão de inserir linha está presente e clicável
+   * e não há overlay de processamento ativo.
+   */
+  private async aguardarDocumentoEstavel(timeout = 15000): Promise<void> {
+    await this.page!.waitForFunction(
+      () => {
+        const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+        const doc = f?.contentDocument
+        if (!doc || doc.readyState !== 'complete') return false
+        const overlay = doc.getElementById('overlay_modal') as HTMLElement
+        if (overlay && overlay.offsetParent !== null) return false
+        const inserir = doc.getElementById('wucButtonInsertDocumentDetail_linkButton1') as HTMLElement
+        return !!inserir && inserir.offsetParent !== null
+      }, undefined,
+      { timeout, polling: 300 }
+    ).catch(() => {})
+    await this.page!.waitForTimeout(800)
   }
 
   private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = '', clienteCodigo = ''): Promise<string> {
