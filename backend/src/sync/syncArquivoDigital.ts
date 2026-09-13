@@ -392,9 +392,66 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
 
     await preencherCodigosEmFalta()
 
+    /**
+     * Descarrega o PDF de um documento e guarda-o no Firebase Storage.
+     * Devolve o URL do nosso backend, ou `null` se não for possível.
+     *
+     * Usa a abordagem comprovada em julho (ver winmaxRPA.ts): aproveitar os cookies
+     * da sessão já autenticada e ir buscar o ficheiro por HTTP direto, em vez de
+     * depender de cliques e do evento de download do browser.
+     *
+     * Uma falha aqui NÃO interrompe a sincronização — o documento é na mesma
+     * importado, apenas sem PDF guardado, e continua acessível pelo caminho lento.
+     */
+    const guardarPdfNoStorage = async (ficheiro: string): Promise<string | null> => {
+      try {
+        // ATENÇÃO — NÃO usar um URL direto aqui.
+        // Em julho de 2026 tentou-se `DigitalArchiveFileHandler.aspx?file=...` e
+        // confirmou-se que devolve ZERO BYTES: esse endereço foi uma suposição e
+        // nunca existiu. O WinMax4 não oferece acesso direto aos ficheiros do
+        // Arquivo — é preciso clicar no link da linha e intercetar o download.
+        // (Registado em memória do projeto; não repetir a tentativa.)
+        const downloadPromise = page.waitForEvent('download', { timeout: 30000 })
+
+        const clicou = await page.evaluate((nome: string) => {
+          const f = document.getElementById('DigitalArchiveDetails_content') as HTMLIFrameElement
+          const grid = f?.contentDocument?.getElementById('wucFileList1_fileList') as HTMLTableElement
+          if (!grid) return false
+          for (const tr of Array.from(grid.querySelectorAll('tbody tr'))) {
+            if (!((tr as HTMLElement).innerText || '').includes(nome)) continue
+            const link = tr.querySelector('a[id*="lnkSelect"], a') as HTMLElement | null
+            if (link) { link.click(); return true }
+          }
+          return false
+        }, ficheiro)
+
+        if (!clicou) return null
+
+        const download = await downloadPromise
+        const stream = await download.createReadStream()
+        if (!stream) return null
+
+        const partes: Buffer[] = []
+        for await (const p of stream) partes.push(Buffer.from(p))
+        const buffer = Buffer.concat(partes)
+
+        // Só aceita PDF verdadeiro — se vier outra coisa, algo correu mal.
+        if (buffer.length < 100 || buffer.subarray(0, 4).toString() !== '%PDF') return null
+
+        const { uploadPDFToStorage } = await import('../services/firebase')
+        await uploadPDFToStorage(buffer, ficheiro, 'arquivo')
+        // Servido pelo nosso backend — o Storage não autoriza pedidos vindos do
+        // domínio da aplicação (ver a correção do CORS em routes/faturas.ts).
+        return `/api/faturas/pdf/arquivo/${encodeURIComponent(ficheiro)}`
+      } catch {
+        return null
+      }
+    }
+
     let totalImportados = 0
     let pagina = 1
     let comCodigo = 0
+    let comPdfGuardado = 0
 
     // CORRIGIDO 03/07/2026: cada documento novo era gravado INDIVIDUALMENTE no Firestore,
     // um `.set()` por documento, sequencialmente. Para o Arquivo Digital, que tipicamente
@@ -436,8 +493,6 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
         linha.numero_documento = numero
         linha.ano              = ano
 
-        // Guarda metadados sem descarregar PDF (demasiado lento para todos os documentos)
-        // O PDF pode ser descarregado on-demand via /api/arquivo/:id/pdf
         const docId = linha.ficheiro.replace(/[.\/\\]/g, '_')
         // Converte data "31/12/2025 21:03:52" para timestamp
         let dataTs: admin.firestore.Timestamp | null = null
@@ -454,10 +509,25 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
         const codigo = codigoCliente(linha.tipo_documento, linha.numero_documento)
         if (codigo) comCodigo++
 
+        // Guarda o PDF no Firebase Storage, aproveitando que estamos NESTA página
+        // do Arquivo com a sessão já autenticada.
+        //
+        // ACRESCENTADO 13/09/2026: até aqui só se guardavam os metadados, e cada
+        // clique em "Descarregar" abria um browser, autenticava-se, navegava até ao
+        // Arquivo, filtrava pela data e percorria as páginas até encontrar o
+        // ficheiro — perto de 10 minutos por documento, medido em produção.
+        //
+        // Guardando aqui, o download passa a ser imediato. Só se aplica a
+        // documentos NOVOS: o histórico já importado continua a usar o caminho
+        // lento, por decisão do Carlos (importar 2315 PDFs levaria horas e o que
+        // interessa na prática são os recentes).
+        const pdfUrl = await guardarPdfNoStorage(linha.ficheiro)
+        if (pdfUrl) comPdfGuardado++
+
         adicionarAoBatch(docId, {
           ...linha,
           cliente_codigo: codigo,
-          pdf_url:      null,
+          pdf_url:      pdfUrl,
           data_ts:      dataTs,
           importado_em: admin.firestore.FieldValue.serverTimestamp(),
           fonte:        'arquivo_digital_winmax',
@@ -486,7 +556,7 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
       estado:           'ok',
     })
 
-    await log(`✅ Arquivo Digital: ${totalImportados} documentos importados · ${comCodigo} com código de cliente`)
+    await log(`✅ Arquivo Digital: ${totalImportados} documentos importados · ${comCodigo} com código de cliente · ${comPdfGuardado} com PDF guardado (download imediato)`)
 
   } catch (err) {
     // CORRIGIDO 27/07/2026: o erro só era registado no log do servidor (invisível
