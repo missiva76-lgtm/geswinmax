@@ -255,7 +255,20 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     // Omitir o `filename` deixa o browser usar o nome que o frontend indicar, que é
     // o que queremos: quem sabe o código do cliente é a aplicação, não esta rota.
     res.setHeader('Content-Type', 'application/pdf')
-    res.setHeader('Content-Disposition', 'inline')
+    // O mesmo endereço serve os dois botões da página: "Ver" (abre no visualizador)
+    // e "Descarregar" (guarda em ficheiro). O parâmetro ?modo=download distingue-os.
+    //
+    // CORRIGIDO 13/09/2026: primeiro este cabeçalho impunha o nome original do
+    // WinMax4, o que fazia o browser ignorar o nome definido na aplicação. Ao
+    // remover o filename ficou `inline` para ambos — e aí o download ficava preso
+    // "a processar", porque o browser tentava ABRIR o PDF enquanto o link pedia
+    // para o GUARDAR.
+    //
+    // A solução é distinguir: `attachment` para descarregar, `inline` para ver. Em
+    // nenhum dos casos se indica o nome — esse vem da aplicação, que é quem conhece
+    // o código do cliente.
+    const paraDescarregar = req.query.modo === 'download'
+    res.setHeader('Content-Disposition', paraDescarregar ? 'attachment' : 'inline')
     res.sendFile(destino, (err?: Error) => {
       if (err) logger.error(`Erro ao enviar PDF ${ficheiro}: ${err}`)
       fs.rmSync(destino, { force: true })

@@ -155,7 +155,11 @@ export default function Arquivo() {
   /** Descarrega o PDF com o nome acima, em vez de o abrir numa aba. */
   const descarregarPDF = async (doc: DocArquivo) => {
     if (pdfAFechar) return
-    const url = doc.pdf_url || pdfDownloadUrl(doc.ficheiro)
+    // ?modo=download faz o backend responder com `attachment` em vez de `inline`.
+    // Sem isso o browser tentava abrir o PDF enquanto o link pedia para o guardar,
+    // e o download ficava preso "a processar".
+    const base = doc.pdf_url || pdfDownloadUrl(doc.ficheiro)
+    const url = base ? `${base}${base.includes('?') ? '&' : '?'}modo=download` : null
     if (!url) return
     setPdfErro(null)
     setPdfAFechar(doc.id || doc.ficheiro)
