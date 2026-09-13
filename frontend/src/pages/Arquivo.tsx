@@ -5,6 +5,9 @@ import ServerWakingBanner from '../components/ServerWakingBanner'
 
 interface DocArquivo {
   id: string
+  /** Código da entidade — obtido no sync por cruzamento com os Documentos emitidos */
+  cliente_codigo?: string
+  cliente_nome?: string
   numero_documento: string
   tipo_documento: string
   data: string
@@ -135,6 +138,46 @@ export default function Arquivo() {
   // buscar o PDF), sem qualquer indicação de que estava a acontecer alguma coisa —
   // parecia simplesmente que não funcionava. Agora busca-se o ficheiro com indicador
   // de progresso na própria linha, e só se abre o separador quando já está pronto.
+  /**
+   * Nome do ficheiro para download: código do cliente à frente do nome original.
+   *   88_20260831_FRB_2026_239.pdf
+   * Sem código (documento sem correspondência nos Documentos emitidos), mantém-se
+   * o nome original — preferível a inventar um prefixo.
+   */
+  const nomeDownload = (doc: DocArquivo): string => {
+    const base = doc.ficheiro || 'documento.pdf'
+    const codigo = (doc.cliente_codigo || '').trim()
+    return codigo ? `${codigo}_${base}` : base
+  }
+
+  /** Descarrega o PDF com o nome acima, em vez de o abrir numa aba. */
+  const descarregarPDF = async (doc: DocArquivo) => {
+    if (pdfAFechar) return
+    const url = doc.pdf_url || pdfDownloadUrl(doc.ficheiro)
+    if (!url) return
+    setPdfErro(null)
+    setPdfAFechar(doc.id || doc.ficheiro)
+    try {
+      const res = await fetch(url)
+      if (!res.ok) {
+        const texto = await res.text().catch(() => '')
+        const detalhe = texto.match(/Detalhe técnico:\s*([^<]+)/)?.[1]?.trim()
+        throw new Error(detalhe || `o servidor respondeu ${res.status}`)
+      }
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = nomeDownload(doc)
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    } catch (e: any) {
+      setPdfErro(`Não foi possível descarregar ${doc.ficheiro} — ${e.message}`)
+    } finally {
+      setPdfAFechar(null)
+    }
+  }
+
   const abrirPDF = async (doc: DocArquivo) => {
     if (pdfAFechar) return
     const url = doc.pdf_url || pdfDownloadUrl(doc.ficheiro)
@@ -239,16 +282,17 @@ export default function Arquivo() {
               <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Nº Documento</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Tipo</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Data</th>
+              <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Cliente</th>
               <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Ficheiro</th>
               <th className="text-center px-4 py-2.5 text-xs font-medium text-gray-500">PDF</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">A carregar...</td></tr>
             )}
             {!loading && filtrados.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-400">
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">
                 {q || tipoFiltro || dataInicio || dataFim
                   ? 'Sem resultados para os filtros aplicados.'
                   : 'Sem documentos importados. Clica em "Importar do WinMax4" para começar.'}
@@ -267,6 +311,16 @@ export default function Arquivo() {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-xs text-gray-600">{doc.data}</td>
+                  <td className="px-4 py-2.5 text-xs">
+                    {doc.cliente_codigo
+                      ? <span className="font-mono text-gray-700">{doc.cliente_codigo}</span>
+                      : <span className="text-gray-300">—</span>}
+                    {doc.cliente_nome && (
+                      <span className="text-gray-500 ml-2 truncate inline-block max-w-[160px] align-bottom" title={doc.cliente_nome}>
+                        {doc.cliente_nome}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-xs text-gray-500 truncate max-w-[200px]" title={doc.ficheiro}>
                     {doc.ficheiro || '—'}
                   </td>
@@ -278,10 +332,18 @@ export default function Arquivo() {
                         title="Ver PDF — pode demorar até 1 minuto (o servidor tem de autenticar-se no WinMax4)">
                         {pdfAFechar === (doc.id || doc.ficheiro)
                           ? <><Loader2 size={13} className="animate-spin"/> A obter...</>
-                          : <><FileText size={13}/> PDF</>}
+                          : <><FileText size={13}/> Ver</>}
                       </button>
                     ) : (
                       <span className="text-gray-300 text-xs">—</span>
+                    )}
+                    {urlPDF && (
+                      <button onClick={() => descarregarPDF(doc)}
+                        disabled={pdfAFechar !== null}
+                        className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 disabled:opacity-40 disabled:cursor-wait ml-3"
+                        title={`Descarregar como ${nomeDownload(doc)}`}>
+                        <Download size={13}/> Descarregar
+                      </button>
                     )}
                   </td>
                 </tr>

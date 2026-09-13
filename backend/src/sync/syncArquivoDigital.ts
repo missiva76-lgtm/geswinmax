@@ -291,8 +291,48 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     }
 
     const backendUrl = process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'
+
+    // CÓDIGO DO CLIENTE (03/09/2026)
+    //
+    // A listagem do Arquivo Digital do WinMax4 só mostra o NOME do cliente, não o
+    // código — por isso `cliente_codigo` era gravado vazio. Mas o nome do ficheiro
+    // identifica o documento (ex: 20260831_FRB_2026_239 -> FRB, 2026/239), e a
+    // coleção `documentos_emitidos` tem exatamente esses documentos indexados por
+    // `TIPO_NUMERO`, com o código do cliente.
+    //
+    // Carrega-se o mapa UMA vez e cruza-se durante a importação. Como esta sync
+    // reimporta tudo, o cruzamento é refeito de cada vez — um documento que hoje
+    // não tenha correspondência (por exemplo, emitido depois da última importação
+    // de documentos) passa a tê-la na sincronização seguinte, sem intervenção.
+    const codigosPorDocumento = new Map<string, string>()
+    try {
+      const snapDocs = await db().collection('documentos_emitidos')
+        .select('tipo_documento', 'numero_documento', 'cliente_codigo')
+        .get()
+      for (const d of snapDocs.docs) {
+        const v = d.data()
+        const codigo = (v.cliente_codigo || '').trim()
+        if (!codigo) continue
+        const chave = `${(v.tipo_documento || '').trim()}_${(v.numero_documento || '').trim()}`
+          .replace(/\//g, '_').toUpperCase()
+        codigosPorDocumento.set(chave, codigo)
+      }
+      await log(`🔗 ${codigosPorDocumento.size} documento(s) com código de cliente disponível para cruzamento`)
+    } catch (e) {
+      // Não é crítico: sem o mapa, os registos ficam sem código, como antes.
+      await log(`⚠️ Não foi possível carregar os códigos de cliente: ${e}`)
+    }
+
+    /** Procura o código do cliente pelo tipo e número do documento. */
+    const codigoCliente = (tipo?: string, numero?: string): string => {
+      if (!tipo || !numero) return ''
+      const chave = `${tipo.trim()}_${numero.trim()}`.replace(/\//g, '_').toUpperCase()
+      return codigosPorDocumento.get(chave) || ''
+    }
+
     let totalImportados = 0
     let pagina = 1
+    let comCodigo = 0
 
     // CORRIGIDO 03/07/2026: cada documento novo era gravado INDIVIDUALMENTE no Firestore,
     // um `.set()` por documento, sequencialmente. Para o Arquivo Digital, que tipicamente
@@ -347,8 +387,14 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
           }
         } catch { /**/ }
 
+        // Cruza com os Documentos emitidos para obter o código do cliente
+        // (ver nota junto a `codigosPorDocumento`).
+        const codigo = codigoCliente(linha.tipo_documento, linha.numero_documento)
+        if (codigo) comCodigo++
+
         adicionarAoBatch(docId, {
           ...linha,
+          cliente_codigo: codigo,
           pdf_url:      null,
           data_ts:      dataTs,
           importado_em: admin.firestore.FieldValue.serverTimestamp(),
@@ -378,7 +424,7 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
       estado:           'ok',
     })
 
-    await log(`✅ Arquivo Digital: ${totalImportados} documentos importados`)
+    await log(`✅ Arquivo Digital: ${totalImportados} documentos importados · ${comCodigo} com código de cliente`)
 
   } catch (err) {
     // CORRIGIDO 27/07/2026: o erro só era registado no log do servidor (invisível
