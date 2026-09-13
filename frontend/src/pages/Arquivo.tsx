@@ -146,8 +146,10 @@ export default function Arquivo() {
    */
   const nomeDownload = (doc: DocArquivo): string => {
     const base = doc.ficheiro || 'documento.pdf'
+    // O código "0" é o que o WinMax4 usa para consumidor final nas faturas
+    // simplificadas — não identifica ninguém, por isso não entra no nome.
     const codigo = (doc.cliente_codigo || '').trim()
-    return codigo ? `${codigo}_${base}` : base
+    return codigo && codigo !== '0' ? `${codigo}_${base}` : base
   }
 
   /** Descarrega o PDF com o nome acima, em vez de o abrir numa aba. */
@@ -312,9 +314,9 @@ export default function Arquivo() {
                   </td>
                   <td className="px-4 py-2.5 text-xs text-gray-600">{doc.data}</td>
                   <td className="px-4 py-2.5 text-xs">
-                    {doc.cliente_codigo
+                    {doc.cliente_codigo && doc.cliente_codigo !== '0'
                       ? <span className="font-mono text-gray-700">{doc.cliente_codigo}</span>
-                      : <span className="text-gray-300">—</span>}
+                      : <span className="text-gray-300" title="Consumidor final">—</span>}
                     {doc.cliente_nome && (
                       <span className="text-gray-500 ml-2 truncate inline-block max-w-[160px] align-bottom" title={doc.cliente_nome}>
                         {doc.cliente_nome}

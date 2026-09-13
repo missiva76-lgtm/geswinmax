@@ -88,7 +88,9 @@ router.get('/pdf/:jobId/:ficheiro', async (req: Request, res: Response) => {
     if (!existe) return res.status(404).json({ erro: 'PDF não encontrado' })
 
     res.setHeader('Content-Type', 'application/pdf')
-    res.setHeader('Content-Disposition', `attachment; filename="${ficheiro.replace(/[^\w.\-]/g, '_')}"`)
+    // Ver nota em routes/arquivo.ts: incluir `filename` aqui faria o browser ignorar
+    // o nome definido no frontend (o formato CLIENTE_TIPO_NUMERO combinado em julho).
+    res.setHeader('Content-Disposition', 'attachment')
     file.createReadStream()
       .on('error', (err) => {
         logger.error(`❌ Erro ao servir PDF ${ficheiro}: ${err}`)

@@ -246,9 +246,16 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     releaseLock?.()
     releaseLock = null
 
-    const nomeSeguro = ficheiro.replace(/[^\w.\-]/g, '_')
+    // CORRIGIDO 13/09/2026: o cabeçalho incluía `filename="..."` com o nome original
+    // do WinMax4. Quando a resposta traz um nome no Content-Disposition, o browser
+    // dá-lhe PRIORIDADE sobre o atributo `download` do link — pelo que o nome
+    // definido no frontend (com o código do cliente à frente) era ignorado e o
+    // ficheiro saía sempre como "20260831_FRB_2026_239.pdf".
+    //
+    // Omitir o `filename` deixa o browser usar o nome que o frontend indicar, que é
+    // o que queremos: quem sabe o código do cliente é a aplicação, não esta rota.
     res.setHeader('Content-Type', 'application/pdf')
-    res.setHeader('Content-Disposition', `inline; filename="${nomeSeguro}"`)
+    res.setHeader('Content-Disposition', 'inline')
     res.sendFile(destino, (err?: Error) => {
       if (err) logger.error(`Erro ao enviar PDF ${ficheiro}: ${err}`)
       fs.rmSync(destino, { force: true })

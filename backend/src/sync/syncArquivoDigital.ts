@@ -312,7 +312,11 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
       for (const d of snapDocs.docs) {
         const v = d.data()
         const codigo = (v.cliente_codigo || '').trim()
-        if (!codigo) continue
+        // CORRIGIDO 13/09/2026: o WinMax4 atribui o código "0" às faturas
+        // simplificadas (consumidor final). Tecnicamente é um código, mas não
+        // identifica ninguém — e daria nomes de ficheiro como
+        // "0_20260910_FS_2026_46.pdf", que não fazem sentido. Trata-se como ausência.
+        if (!codigo || codigo === '0') continue
         const chave = `${(v.tipo_documento || '').trim()}_${(v.numero_documento || '').trim()}`
           .replace(/\//g, '_').toUpperCase()
         codigosPorDocumento.set(chave, codigo)
