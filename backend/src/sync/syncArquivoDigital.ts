@@ -330,6 +330,64 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
       return codigosPorDocumento.get(chave) || ''
     }
 
+    /**
+     * Preenche o código de cliente nos documentos JÁ importados.
+     *
+     * CORRIGIDO 13/09/2026 — ERRO DE ANÁLISE MEU:
+     * Ao acrescentar o cruzamento (03/09) afirmei que "como esta sync reimporta
+     * tudo, o cruzamento é refeito de cada vez". ERRADO — esta sincronização é
+     * INCREMENTAL: salta os ficheiros já importados. Confirmado no log de 13/09,
+     * em que as 232 páginas deram "0 novos" e nenhum dos 2315 documentos existentes
+     * foi tocado. O campo continuava vazio, como o Carlos reportou.
+     *
+     * Este passo corrige isso sem obrigar a reimportar as 232 páginas (que demora
+     * ~7 minutos de navegação): lê os documentos sem código, cruza com o mapa, e
+     * grava só os que passam a ter correspondência. É rápido porque não envolve
+     * navegação no WinMax4 — é só Firestore.
+     *
+     * Corre em todas as sincronizações: um documento que hoje não tenha
+     * correspondência (por a importação de Documentos emitidos ainda não o ter
+     * apanhado) passa a tê-la assim que essa importação corra.
+     */
+    const preencherCodigosEmFalta = async (): Promise<void> => {
+      if (codigosPorDocumento.size === 0) return
+      try {
+        const snap = await db().collection('arquivo')
+          .select('tipo_documento', 'numero_documento', 'cliente_codigo')
+          .get()
+
+        let batch = db().batch()
+        let porGravar = 0
+        let atualizados = 0
+
+        for (const d of snap.docs) {
+          const v = d.data()
+          if ((v.cliente_codigo || '').trim()) continue // já tem
+          const codigo = codigoCliente(v.tipo_documento, v.numero_documento)
+          if (!codigo) continue
+
+          batch.update(d.ref, { cliente_codigo: codigo })
+          porGravar++
+          atualizados++
+
+          if (porGravar >= 400) {
+            await batch.commit()
+            batch = db().batch()
+            porGravar = 0
+          }
+        }
+        if (porGravar > 0) await batch.commit()
+
+        await log(atualizados > 0
+          ? `🔗 ${atualizados} documento(s) existentes passaram a ter código de cliente`
+          : '🔗 Nenhum documento existente em falta de código')
+      } catch (e) {
+        await log(`⚠️ Não foi possível preencher códigos em falta: ${e}`)
+      }
+    }
+
+    await preencherCodigosEmFalta()
+
     let totalImportados = 0
     let pagina = 1
     let comCodigo = 0
