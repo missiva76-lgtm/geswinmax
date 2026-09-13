@@ -22,6 +22,7 @@ export interface FaturaResultado {
   cliente_nome: string
   tipo_documento: string
   sucesso: boolean
+  em_aberto?: boolean
   numero_documento?: string
   pdf_url?: string
   total_linhas: number

@@ -167,13 +167,28 @@ export default function Configuracoes() {
     getConfig().then(c => {
       setConfig(prev => ({ ...prev, ...c }))
       if (c.tipos_documento) setTipos(c.tipos_documento)
+      // CORRIGIDO 19/08/2026: esta lista tinha apenas 6 tipos e faltava o FRB
+      // (Fatura Reboque), que é dos mais usados. Passa a espelhar exatamente a
+      // tabela TIPO_DOC do backend (backend/src/rpa/winmaxRPA.ts), que é a que
+      // o robô usa de facto ao emitir — as duas devem manter-se alinhadas.
       else setTipos([
-        { codigo: 'FAA', descricao: 'Fatura a Clientes',   valor: '37' },
-        { codigo: 'FR',  descricao: 'Fatura Recibo',       valor: '55' },
-        { codigo: 'FS',  descricao: 'Fatura Simplificada', valor: '46' },
-        { codigo: 'FTB', descricao: 'Fat Recibo B',        valor: '45' },
-        { codigo: 'NCC', descricao: 'Nota de Crédito',     valor: '40' },
-        { codigo: 'GT',  descricao: 'Guia de Transporte',  valor: '49' },
+        { codigo: 'FAA', descricao: 'Fatura a Clientes',    valor: '37' },
+        { codigo: 'FR',  descricao: 'Fatura Recibo',        valor: '55' },
+        { codigo: 'FS',  descricao: 'Fatura Simplificada',  valor: '46' },
+        { codigo: 'FTB', descricao: 'Fat Recibo B',         valor: '45' },
+        { codigo: 'FRB', descricao: 'Fatura Reboque',       valor: '53' },
+        { codigo: 'NCC', descricao: 'Nota de Crédito',      valor: '40' },
+        { codigo: 'NBB', descricao: 'Nota de Débito',       valor: '43' },
+        { codigo: 'GT',  descricao: 'Guia de Transporte',   valor: '49' },
+        { codigo: 'GR',  descricao: 'Guia de Remessa',      valor: '3'  },
+        { codigo: 'FO',  descricao: 'Folha de Obra',        valor: '50' },
+        { codigo: 'ORR', descricao: 'Orçamento',            valor: '42' },
+        { codigo: 'REE', descricao: 'Recibo',               valor: '35' },
+        { codigo: 'RC',  descricao: 'Recibo IVA Caixa',     valor: '48' },
+        { codigo: 'VDD', descricao: 'Venda a Dinheiro',     valor: '33' },
+        { codigo: 'VDB', descricao: 'Venda a Dinheiro B',   valor: '34' },
+        { codigo: 'CM',  descricao: 'Comprovativo',         valor: '59' },
+        { codigo: 'CO',  descricao: 'Conta',                valor: '56' },
       ])
     }).catch(() => {})
   }, [])

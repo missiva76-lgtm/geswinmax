@@ -176,15 +176,47 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
     await rpa.iniciar()
     await rpa.login()
 
-    const backendUrl = process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'
 
     const resultados = await rpa.processarFaturas(faturasParaEmitir, async (pct, resultado) => {
       await updateJob(jobId, { progresso: pct })
 
+      // CORRIGIDO 31/08/2026: `resultado.pdf_url` pode ser DUAS coisas diferentes,
+      // conforme o upload para o Firebase Storage tenha corrido bem ou não:
+      //   • sucesso  -> URL público https://storage.googleapis.com/...
+      //   • falha    -> caminho local em disco (/opt/render/.../ficheiro.pdf)
+      // O código anterior fazia apenas `fs.existsSync(resultado.pdf_url)`, que dá
+      // sempre FALSO para um URL — logo, sempre que o Storage FUNCIONAVA (o caso
+      // normal), o pdf_url ficava gravado a null. Sem ele não há link no Histórico
+      // nem download automático depois da emissão.
+      // CORRIGIDO 31/08/2026: o URL apontava diretamente para o Firebase Storage
+      // (https://storage.googleapis.com/...). O browser bloqueava o download por
+      // CORS — o bucket não autoriza pedidos vindos do domínio da aplicação.
+      // Confirmado na consola: "blocked by CORS policy: No
+      // 'Access-Control-Allow-Origin' header is present".
+      //
+      // Passa a apontar para /api/faturas/pdf/..., servido pelo nosso backend a
+      // partir do Storage. Como o pedido passa pelo mesmo domínio (redirect /api/*
+      // do Netlify), não há CORS.
+      // CORRIGIDO 31/08/2026 (2ª causa do download não funcionar):
+      // O URL era montado com `process.env.BACKEND_URL || 'https://geswinmax-backend.onrender.com'`
+      // — e esse valor por omissão está ERRADO: o backend real é
+      // geswinmax-backend-8oo6.onrender.com. Sem a variável definida no Render, o
+      // pdf_url apontava para um endereço inexistente.
+      //
+      // Passa a guardar-se um caminho RELATIVO. O frontend chama /api/... e o
+      // Netlify reencaminha para o backend — deixa de haver dependência de
+      // variáveis de ambiente ou de saber o nome do serviço, e resolve também o
+      // CORS (mesmo domínio).
       let pdfUrl: string | null = null
-      if (resultado.sucesso && resultado.pdf_url && fs.existsSync(resultado.pdf_url)) {
+      if (resultado.sucesso && resultado.pdf_url) {
         const nomeFicheiro = path.basename(resultado.pdf_url)
-        pdfUrl = `${backendUrl}/api/pdfs/${jobId}/${encodeURIComponent(nomeFicheiro)}`
+        if (/^https?:\/\//i.test(resultado.pdf_url)) {
+          // Está no Storage — servido pelo backend, sem CORS
+          pdfUrl = `/api/faturas/pdf/${jobId}/${encodeURIComponent(nomeFicheiro)}`
+        } else if (fs.existsSync(resultado.pdf_url)) {
+          // Ficou em disco (upload para o Storage falhou) — pasta estática
+          pdfUrl = `/api/pdfs/${jobId}/${encodeURIComponent(nomeFicheiro)}`
+        }
       }
 
       await db().collection('faturas').doc().set({
@@ -198,6 +230,9 @@ export async function processarEmissaoJob(jobId: string, excelLocalPath: string)
         data_documento:   resultado.data_documento || null,
         pdf_url:          pdfUrl,
         sucesso:          resultado.sucesso,
+        // Documento criado no WinMax4 mas deliberadamente NÃO fechado (erro ou
+        // divergência) — fica à espera de verificação e fecho manual.
+        em_aberto:        resultado.em_aberto === true,
         total_linhas:     resultado.total_linhas,
         linhas_ok:        resultado.linhas_ok,
         erro:             resultado.erro || null,

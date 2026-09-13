@@ -8,8 +8,9 @@ import * as fs from 'fs'
 import { Browser, BrowserContext, Page, chromium } from 'playwright'
 import { Fatura, ResultadoFatura, ErroLinha } from '../types'
 import { logger } from '../services/logger'
-import { appendJobLog } from '../services/firebase'
+import { appendJobLog, db } from '../services/firebase'
 import { acquireBrowserLock } from '../services/browserLock'
+import { clicarToolboxPorTitulo } from './toolboxHelper'
 
 interface RPAConfig {
   winmaxUrl: string
@@ -43,25 +44,44 @@ const SEL = {
   msgBody:     '#wucMessagePanel1_LabelMessageDiv',
 }
 
-const TIPO_DOC: Record<string, string> = {
-  FAA: '37',  // Fatura A
-  FR:  '55',  // Fatura Recibo
-  FS:  '46',  // Fatura Simplificada
-  FTB: '45',  // Fat Recibo B
-  FRB: '53',  // Fatura Reboque ← confirmado ao vivo 19/06/2026
-  NCC: '40',  // Nota de Crédito
-  GT:  '49',  // Guia de Transporte
-  FO:  '50',  // Folha de Obra
-  GR:  '3',   // Guia de Remessa
-  NBB: '43',  // Nota de Débito
-  ORR: '42',  // Orçamento
-  REE: '35',  // Recibo
-  RC:  '48',  // Recibo IVA Caixa
-  VDD: '33',  // Venda a Dinheiro
-  VDB: '34',  // Venda a Dinheiro B
-  CM:  '59',  // Comprovativo
-  CO:  '56',  // Conta
-}
+/**
+ * Tipos de documento com descrição, para apresentação nas Configurações.
+ *
+ * FONTE ÚNICA (19/08/2026): existiam três listas desalinhadas — esta, os defaults
+ * em routes/config.ts (8 tipos) e os do frontend (6, sem o FRB, que é dos mais
+ * usados). Passa a haver só esta; as outras derivam daqui. Ao acrescentar um tipo
+ * novo, basta acrescentá-lo aqui.
+ *
+ * O `valor` é o value da opção no ddlDocumentType do WinMax4 — confirmados ao vivo.
+ */
+export const TIPOS_DOCUMENTO: Array<{ codigo: string; descricao: string; valor: string }> = [
+  { codigo: 'FAA', descricao: 'Fatura a Clientes',   valor: '37' },
+  { codigo: 'FR',  descricao: 'Fatura Recibo',       valor: '55' },
+  { codigo: 'FS',  descricao: 'Fatura Simplificada', valor: '46' },
+  { codigo: 'FTB', descricao: 'Fat Recibo B',        valor: '45' },
+  { codigo: 'FRB', descricao: 'Fatura Reboque',      valor: '53' },
+  { codigo: 'NCC', descricao: 'Nota de Crédito',     valor: '40' },
+  { codigo: 'NBB', descricao: 'Nota de Débito',      valor: '43' },
+  { codigo: 'GT',  descricao: 'Guia de Transporte',  valor: '49' },
+  { codigo: 'GR',  descricao: 'Guia de Remessa',     valor: '3'  },
+  { codigo: 'FO',  descricao: 'Folha de Obra',       valor: '50' },
+  { codigo: 'ORR', descricao: 'Orçamento',           valor: '42' },
+  { codigo: 'REE', descricao: 'Recibo',              valor: '35' },
+  { codigo: 'RC',  descricao: 'Recibo IVA Caixa',    valor: '48' },
+  { codigo: 'VDD', descricao: 'Venda a Dinheiro',    valor: '33' },
+  { codigo: 'VDB', descricao: 'Venda a Dinheiro B',  valor: '34' },
+  { codigo: 'CM',  descricao: 'Comprovativo',        valor: '59' },
+  { codigo: 'CO',  descricao: 'Conta',               valor: '56' },
+]
+
+/**
+ * Mapa código → valor, DERIVADO de TIPOS_DOCUMENTO.
+ * Antes era uma lista à parte, o que permitia divergir da usada nas Configurações
+ * — foi assim que o FRB acabou por faltar num sítio e existir noutro.
+ */
+const TIPO_DOC: Record<string, string> = Object.fromEntries(
+  TIPOS_DOCUMENTO.map(t => [t.codigo, t.valor])
+)
 
 const MENU = {
   imprimir:            'transactionDocumentsIssueCustomerStandardDocumentPrint',
@@ -108,6 +128,58 @@ export class WinmaxRPA {
   // imprimirEGuardarPDF. Usado por abrirNovaFatura() para decidir se precisa de uma
   // recuperação mais agressiva (recarregar a página) em vez do abandono normal.
   private falhaDuranteFecho = false
+
+  /**
+   * REGRA CENTRAL (31/08/2026, definida pelo Carlos):
+   * Perante QUALQUER erro, timeout ou divergência, o documento NUNCA é fechado.
+   * Fica em aberto no WinMax4 para verificação e fecho manual, e o robô passa à
+   * fatura seguinte.
+   *
+   * Antes fazia-se o oposto: em erro de linha chamava-se `abandonarDocumento()`,
+   * que APAGA as linhas já inseridas e descarta o trabalho. E uma falha ao aplicar
+   * um comentário nem sequer impedia o fecho — o documento seguia fechado, sem o
+   * comentário, sem ninguém dar por isso.
+   *
+   * Cada divergência detetada é acumulada aqui. Se houver alguma, `terminarDocumento`
+   * não é chamado.
+   */
+  private divergencias: string[] = []
+
+  /** Regista uma divergência — impede o fecho do documento atual. */
+  private async registarDivergencia(msg: string): Promise<void> {
+    this.divergencias.push(msg)
+    await this.log(`  ⚠️ DIVERGÊNCIA: ${msg}`)
+  }
+
+  /**
+   * Sinal de aborto — consultado entre faturas e entre linhas. É lido do documento
+   * do job no Firestore, para que o botão "Abortar" na página de Emissão possa
+   * interromper um lote a meio sem esperar que termine.
+   */
+  /**
+   * Verifica rapidamente se a sessão do WinMax4 ainda está utilizável — isto é,
+   * se o Toolbox tem ícones. Uma verificação de 5 segundos evita gastar 5 minutos
+   * por fatura a procurar atalhos numa sessão que já morreu.
+   */
+  private async sessaoViva(): Promise<boolean> {
+    return this.page!.waitForFunction(
+      () => {
+        const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
+        return (tb?.contentDocument?.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length || 0) > 0
+      }, undefined,
+      { timeout: 5000, polling: 500 }
+    ).then(() => true).catch(() => false)
+  }
+
+  private async abortoPedido(): Promise<boolean> {
+    if (!this.config.jobId) return false
+    try {
+      const doc = await db().collection('jobs').doc(this.config.jobId).get()
+      return doc.data()?.abortar === true
+    } catch {
+      return false // falha a consultar não deve interromper o processo
+    }
+  }
 
   constructor(config: RPAConfig) { this.config = config }
 
@@ -160,6 +232,52 @@ export class WinmaxRPA {
     await this.browser?.close()
     this.releaseLock?.()
     this.releaseLock = null
+  }
+
+  /**
+   * Fecha o browser e abre outro, mantendo o semáforo já adquirido.
+   *
+   * CORRIGIDO 31/08/2026: a recuperação após uma falha no fecho de documento fazia
+   * apenas novo login na MESMA sessão. Não funciona — o WinMax4 mantém a sessão
+   * anterior ativa e devolve sempre o ecrã de autenticação, sem avançar (mesmo
+   * comportamento já observado nas exportações de compras em julho). O resultado
+   * era pior do que o problema original: o login falhava por timeout, o Toolbox
+   * ficava vazio, e TODAS as faturas seguintes do lote falhavam em cadeia.
+   *
+   * Um browser novo elimina o estado corrompido de raiz. Antes de fechar, tenta-se
+   * terminar a sessão no WinMax4 para libertar o posto de licença — se não for
+   * possível (a página pode estar num estado impossível), segue-se na mesma.
+   */
+  private async reiniciarBrowser(): Promise<void> {
+    try {
+      const saiu = await clicarToolboxPorTitulo(this.page!, 'Terminar sessão', 11)
+      if (saiu) await this.page!.waitForTimeout(2000)
+    } catch { /* não crítico — o objetivo é só libertar o posto */ }
+
+    await this.browser?.close().catch(() => {})
+    this.browser = null
+    this.context = null
+    this.page = null
+
+    this.browser = await chromium.launch({
+      headless: true,
+      slowMo: 40,
+      channel: undefined,
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+      args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    })
+    this.context = await this.browser.newContext({
+      locale: 'pt-PT',
+      timezoneId: 'Europe/Lisbon',
+      acceptDownloads: true,
+      storageState: { cookies: [], origins: [] },
+    })
+    this.page = await this.context.newPage()
+    this.page.on('dialog', async (dialog) => {
+      await this.log(`  🔔 Diálogo nativo do browser: [${dialog.type()}] "${dialog.message()}" — a aceitar`)
+      await dialog.accept().catch(() => {})
+    })
+    await this.login()
   }
 
   async login(): Promise<void> {
@@ -305,6 +423,85 @@ export class WinmaxRPA {
     )
   }
 
+  /**
+   * Esvazia o painel de mensagens do WinMax4.
+   *
+   * CORRIGIDO 31/08/2026 — CAUSA DO FALSO ERRO NO ARTIGO "TX":
+   * O painel de mensagens está sempre presente no DOM e o WinMax4 NÃO o limpa entre
+   * operações. O código apenas o lia. Resultado: um aviso gerado por uma linha (por
+   * exemplo, um artigo com preço zero, que é perfeitamente legítimo) permanecia no
+   * painel, e a linha SEGUINTE lia essa mensagem antiga e atribuía-a ao seu próprio
+   * artigo — rejeitando um artigo válido.
+   *
+   * Confirmado em produção (31/08, lote de 4 faturas): linha 1 "SERV REB" a 0€,
+   * linha 2 "TX" rejeitada com "Artigo não definido ou inválido". O TX existe e
+   * sempre existiu.
+   *
+   * A "reconfirmação" que existia antes era inútil: relia o MESMO painel 1,5s
+   * depois e, como ninguém o limpava, confirmava o erro falso.
+   *
+   * Limpar antes de cada operação garante que qualquer mensagem lida a seguir
+   * pertence de facto a essa operação.
+   */
+  /**
+   * Captura o estado real do formulário quando um artigo válido é rejeitado.
+   * Guarda uma screenshot acessível por URL e regista o conteúdo dos campos —
+   * a mesma abordagem que revelou, em julho, que o Toolbox vazio se devia ao
+   * utilizador errado nas Configurações.
+   */
+  private async diagnosticarLinha(di: string, artigoRef: string, n: number): Promise<void> {
+    try {
+      const estado = await this.page!.evaluate((id: string) => {
+        const f = document.getElementById(id) as HTMLIFrameElement
+        const doc = f?.contentDocument
+        if (!doc) return { erro: 'iframe do documento inacessível' }
+        const val = (idCampo: string) => {
+          const el = doc.getElementById(idCampo) as HTMLInputElement | null
+          return el ? { valor: el.value, desativado: el.disabled, visivel: el.offsetParent !== null } : null
+        }
+        // Alguma janela/modal por cima a bloquear a interação?
+        const modais = Array.from(doc.querySelectorAll('div[id*="odal"], div[id*="opup"], div[id*="verlay"]'))
+          .filter(e => (e as HTMLElement).offsetParent !== null)
+          .map(e => e.id)
+        return {
+          artigoCodigo:    val('txtArticleCode'),
+          // Ambos os nomes: `txtArticleDesignation` não existe (devolveu null no
+          // diagnóstico de 31/08); a tabela SEL indica `txtDesignation`. Registar
+          // os dois evita voltar a esperar por um elemento inexistente.
+          artigoDescricao:    val('txtDesignation'),
+          artigoDescricaoAlt: val('txtArticleDesignation'),
+          preco:           val('txtUnitaryPrice'),
+          quantidade:      val('txtQuantity'),
+          painelMensagem:  (doc.querySelector('#wucMessagePanel1_LabelMessageDiv') as HTMLElement)?.innerText?.trim() || '',
+          modaisVisiveis:  modais,
+          totalLinhasGrelha: doc.querySelectorAll('[id^="DeleteCompound"]').length,
+        }
+      }, di)
+
+      await this.log(`  🔬 DIAGNÓSTICO linha ${n} ("${artigoRef}"): ${JSON.stringify(estado)}`)
+
+      const pastaDebug = path.join(process.cwd(), 'pdfs', 'debug')
+      fs.mkdirSync(pastaDebug, { recursive: true })
+      const nomeFicheiro = `linha-${artigoRef.replace(/[^\w]/g, '_')}-${Date.now()}.png`
+      await this.page!.screenshot({ path: path.join(pastaDebug, nomeFicheiro), fullPage: true })
+      await this.log(`  📸 Screenshot: /api/pdfs/debug/${nomeFicheiro}`)
+    } catch (e) {
+      await this.log(`  ⚠️ Não foi possível recolher diagnóstico: ${e}`)
+    }
+  }
+
+  private async limparPainelMensagens(di: string): Promise<void> {
+    await this.page!.evaluate(({ id, bodySel, panelSel }) => {
+      const f = document.getElementById(id) as HTMLIFrameElement
+      const doc = f?.contentDocument
+      if (!doc) return
+      const body = doc.querySelector(bodySel) as HTMLElement
+      if (body) body.innerText = ''
+      const panel = doc.querySelector(panelSel) as HTMLElement
+      if (panel) panel.style.display = 'none'
+    }, { id: di, bodySel: SEL.msgBody, panelSel: SEL.msgPanel }).catch(() => {})
+  }
+
   private async verificarErro(di: string): Promise<string | null> {
     // O painel de erro do WinMax4 está sempre no DOM — só conta se tiver texto
     return this.page!.evaluate(({ id, bodySel }) => {
@@ -424,12 +621,13 @@ export class WinmaxRPA {
     // Nestes casos, recarrega-se a página e faz-se login de novo, em vez de apenas
     // tentar abandonar o documento — mais lento, mas garante um estado limpo.
     if (this.falhaDuranteFecho) {
-      await this.log('  🔄 A fatura anterior falhou durante o fecho do documento — a recarregar sessão para garantir estado limpo...')
+      await this.log('  🔄 A fatura anterior falhou durante o fecho — a reiniciar o browser para garantir estado limpo...')
       this.falhaDuranteFecho = false
       try {
-        await this.login()
+        await this.reiniciarBrowser()
+        await this.log('  ✅ Sessão reiniciada com browser novo')
       } catch (e) {
-        await this.log(`  ⚠️ Falha ao recarregar sessão: ${e} — a tentar recuperação normal`)
+        await this.log(`  ⚠️ Falha ao reiniciar a sessão: ${e} — a tentar recuperação normal`)
       }
     }
 
@@ -440,32 +638,36 @@ export class WinmaxRPA {
     }).catch(() => false)
 
     if (documentoAberto) {
-      await this.log('  ⚠️ Documento aberto detetado — a abandonar antes de continuar...')
-      await this.abandonarDocumento()
-      await this.page!.waitForTimeout(1500)
+      // CORRIGIDO 31/08/2026: aqui chamava-se `abandonarDocumento()`, que APAGA as
+      // linhas do documento encontrado. Isso entra em conflito direto com a regra
+      // de deixar documentos em aberto para verificação manual — um documento
+      // deixado de propósito na fatura anterior seria destruído pela seguinte.
+      // Reiniciar o browser deixa o documento intacto no WinMax4.
+      await this.log('  ⚠️ Documento aberto detetado — a reiniciar sessão SEM lhe tocar (fica para verificação manual)...')
+      await this.reiniciarBrowser()
+      await this.page!.waitForTimeout(1000)
     }
 
-    // Garante que o Toolbox está carregado antes de clicar
-    await this.page!.waitForFunction(
-      () => {
-        const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
-        const doc = tb?.contentDocument
-        return !!(doc && doc.readyState === 'complete' &&
-          doc.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]').length > 0)
-      }, undefined,
-      { timeout: 60000, polling: 500 }
+    // CORRIGIDO 30/08/2026: esta procura era feita à mão e só olhava para a página
+    // ATUAL do Toolbox — que tem 11 páginas. Bastava o Toolbox abrir noutra página
+    // para o atalho nunca ser encontrado, e o processo ficava depois 60 segundos à
+    // espera de um iframe que jamais apareceria (confirmado em produção: cinco
+    // faturas seguidas com "NÃO ENCONTRADO" e timeout). Também exigia
+    // correspondência exata do título, sem tolerância a variações.
+    //
+    // Passa a usar o helper partilhado, que percorre as páginas, tem segunda
+    // tentativa quando o Toolbox aparece sem ícones (recarregamento transitório do
+    // iframe) e regista no log os atalhos que encontrou em cada página.
+    const encontrado = await clicarToolboxPorTitulo(
+      this.page!, 'Documentos de clientes', 11, (msg) => this.log(msg)
     )
-
-    // Verifica se o atalho existe e clica
-    const encontrado = await this.page!.evaluate(() => {
-      const tb = document.getElementById('Toolbox_content') as HTMLIFrameElement
-      const tbDoc = tb?.contentDocument
-      const divs = Array.from(tbDoc?.querySelectorAll('div[id^="Toolbox_ShortcutIconDiv"]') || [])
-      const docClientes = divs.find(d => d.getAttribute('title') === 'Documentos de clientes') as HTMLElement | undefined
-      if (docClientes) { docClientes.click(); return true }
-      return false
-    })
     await this.log(`  🖱️ Clique "Documentos de clientes": ${encontrado ? 'OK' : 'NÃO ENCONTRADO'}`)
+
+    if (!encontrado) {
+      // Falhar já, com uma mensagem clara, em vez de esperar 60s por um iframe
+      // que não vai aparecer — era isso que tornava cada fatura falhada tão lenta.
+      throw new Error('atalho "Documentos de clientes" não encontrado no Toolbox do WinMax4')
+    }
 
     // Aguarda o iframe aparecer no DOM
     await this.page!.waitForFunction(
@@ -501,9 +703,10 @@ export class WinmaxRPA {
       di,
       { timeout: 30000, polling: 500 }
     ).catch(async () => {
-      await this.log('  ⚠️ ddlDocumentType ainda disabled — a tentar fechar documento aberto...')
-      await this.abandonarDocumento()
-      await this.page!.waitForTimeout(2000)
+      // Ver nota acima: não se apaga o documento encontrado — reinicia-se a sessão.
+      await this.log('  ⚠️ ddlDocumentType ainda disabled — a reiniciar sessão SEM tocar no documento aberto...')
+      await this.reiniciarBrowser()
+      await this.page!.waitForTimeout(1000)
       await this.abrirNovaFatura()
       // Segunda tentativa de aguardar enabled
       await this.page!.waitForFunction(
@@ -576,6 +779,10 @@ export class WinmaxRPA {
         `Linha ${n} — "${linha.artigo_ref}": iframe do documento desapareceu antes de iniciar a linha (possível timeout de sessão ou popup inesperado do WinMax4)`)
     }
 
+    // Limpa mensagens residuais ANTES de começar — sem isto, um aviso da linha
+    // anterior seria lido como erro desta (ver limparPainelMensagens).
+    await this.limparPainelMensagens(di)
+
     // Clica "Inserir" para abrir o formulário de nova linha
     await this.dismissarOverlayPreso()
     await this.page!.frameLocator('#DocumentIssue_content')
@@ -592,34 +799,54 @@ export class WinmaxRPA {
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('#txtArticleCode')
       .press('Tab')
-    // Aguardar que o artigo carregue — pelo menos a descrição deve ficar preenchida
-    await this.page!.waitForFunction(
+    // CORRIGIDO 31/08/2026: esperava-se por `txtArticleDesignation` — um elemento que
+    // NÃO EXISTE. O diagnóstico devolveu `null` para ele (a tabela SEL diz
+    // `txtDesignation`). Como a espera tinha `.catch(() => {})`, falhava em silêncio
+    // e desperdiçava os 15 segundos completos em CADA linha, sem que ninguém desse
+    // por isso — é a explicação dos ~17s entre linhas nos logs.
+    //
+    // O sinal fiável, revelado pelo próprio diagnóstico, é outro: enquanto o artigo
+    // não é reconhecido, os campos de preço e quantidade estão DESATIVADOS. Ficam
+    // ativos assim que o WinMax4 o aceita — não depende de saber o id da descrição.
+    const artigoReconhecido = await this.page!.waitForFunction(
       (id: string) => {
         const f = document.getElementById(id) as HTMLIFrameElement
-        const desc = f?.contentDocument?.getElementById('txtArticleDesignation') as HTMLInputElement
-        return desc && desc.value && desc.value.length > 0
+        const preco = f?.contentDocument?.getElementById('txtUnitaryPrice') as HTMLInputElement
+        return !!preco && !preco.disabled
       },
       di,
       { timeout: 15000, polling: 300 }
-    ).catch(() => {})
-    await this.page!.waitForTimeout(500)
+    ).then(() => true).catch(() => false)
+    await this.page!.waitForTimeout(300)
 
+    // CORRIGIDO 31/08/2026: a "reconfirmação" que aqui existia relia o MESMO painel
+    // 1,5s depois. Como nada o limpava, uma mensagem antiga continuava lá e o erro
+    // falso era "confirmado" — foi assim que o artigo TX, válido, foi rejeitado.
+    //
+    // Agora o painel é limpo antes de cada linha (ver limparPainelMensagens), pelo
+    // que uma mensagem encontrada aqui pertence mesmo a este artigo. Além disso,
+    // confirma-se pelo estado real do formulário: se a descrição do artigo ficou
+    // preenchida, o WinMax4 reconheceu-o — independentemente do que diga o painel.
     const erroArtigo = await this.verificarErro(di)
     if (erroArtigo) {
-      // CORRIGIDO 02/07/2026: produção registou "Artigo não definido ou inválido" para o
-      // código TX, que é um artigo válido e existente (confirmado no WinMax4 e via MCP,
-      // reproduzindo a mesma sequência sem erro). O artigo_ref já vem .trim().toUpperCase()
-      // desde emissaoJob.ts, por isso não é problema de dados sujos. A hipótese mais provável
-      // é uma mensagem de validação transitória do WinMax4 (ex: sob latência/carga no Render),
-      // que se resolve sozinha pouco depois. Por isso, reconfirmamos antes de desistir da linha.
-      await this.log(`  ⏳ Possível erro no artigo "${linha.artigo_ref}" — a reconfirmar antes de desistir...`)
-      await this.page!.waitForTimeout(1500)
-      const erroArtigoConfirmado = await this.verificarErro(di)
-      if (erroArtigoConfirmado) {
+      // Usa o mesmo sinal fiável da espera acima: se o preço ficou ativo, o WinMax4
+      // reconheceu o artigo — independentemente do que diga o painel de mensagens.
+      if (artigoReconhecido) {
+        // O artigo foi reconhecido: a mensagem refere-se a outra coisa (um aviso de
+        // preço, por exemplo). Regista-se, mas não se rejeita a linha.
+        await this.log(`  ℹ️ Artigo "${linha.artigo_ref}" reconhecido (descrição preenchida). Mensagem do WinMax4: "${erroArtigo}"`)
+      } else {
+        // DIAGNÓSTICO 31/08/2026: o artigo "TX" existe e é válido, mas é rejeitado
+        // de forma reprodutível quando a linha ANTERIOR tem preço 0 e um comentário
+        // multilinha. Limpar o painel de mensagens não resolveu, logo a mensagem não
+        // é residual — algo impede mesmo o WinMax4 de reconhecer o artigo.
+        //
+        // Sem ver o ecrã nesse instante, qualquer correção seria adivinhação. Captura
+        // aqui o estado real: screenshot e conteúdo dos campos do formulário.
+        await this.diagnosticarLinha(di, linha.artigo_ref, n)
         throw new ErroLinhaArtigo(n, linha.artigo_ref,
-          `Linha ${n} — "${linha.artigo_ref}": ${erroArtigoConfirmado}`)
+          `Linha ${n} — "${linha.artigo_ref}": ${erroArtigo}`)
       }
-      await this.log(`  ✅ Falso alarme — mensagem desapareceu, artigo "${linha.artigo_ref}" válido`)
     }
 
     // Aguardar que txtUnitaryPrice esteja enabled (artigo carregado)
@@ -786,11 +1013,36 @@ export class WinmaxRPA {
     await this.log(`  📦 Linha ${n}: ${linha.artigo_ref} x${linha.quantidade} @ ${linha.preco_unitario}€`)
   }
 
+  /**
+   * Fecha o formulário de linha vazia que o WinMax4 deixa aberto após cada inserção.
+   *
+   * CORRIGIDO 31/08/2026: isto só acontecia no fecho do documento — ou seja, os
+   * comentários eram aplicados com uma linha ainda em EDIÇÃO. A grelha fica nesse
+   * estado com uma linha a mais e o WinMax4 nem sempre abre a janela de observações
+   * (falhou em 2 de 5 faturas: "janela não abriu" e "não confirmado"). Fechar a
+   * linha em edição ANTES de aplicar os comentários deixa a grelha num estado
+   * estável, com exatamente as linhas inseridas.
+   */
+  private async cancelarLinhaVazia(): Promise<void> {
+    const di = 'DocumentIssue_content'
+    const temCancelar = await this.evalIn(di,
+      `!!document.getElementById('wucButtonCancelDocumentDetail_linkButton1')`
+    ).catch(() => false) as boolean
+    if (!temCancelar) return
+    await this.dismissarOverlayPreso()
+    await this.page!.frameLocator('#DocumentIssue_content')
+      .locator('#wucButtonCancelDocumentDetail_linkButton1')
+      .click()
+      .catch(() => {})
+    await this.page!.waitForTimeout(800)
+    await this.log('  ✖️  Linha vazia cancelada')
+  }
+
   private normalizarComentario(txt: string): string {
     return txt.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
   }
 
-  private async verificarEReabrirComentario(comentarioEsperado: string): Promise<boolean> {
+  private async verificarEReabrirComentario(comentarioEsperado: string, indiceLinha: number): Promise<boolean> {
     // Duplo check redundante: reabre a janela de comentário depois de a termos fechado,
     // e confirma que o texto ficou mesmo guardado — em vez de assumir sucesso só porque
     // o clique em "Confirmar" não deu erro visível.
@@ -798,7 +1050,7 @@ export class WinmaxRPA {
       await this.dismissarOverlayPreso()
       await this.page!.frameLocator('#DocumentIssue_content')
         .locator('input[id^="DetailPropertyRemarks"]')
-        .last()
+        .nth(indiceLinha)
         .click({ timeout: 5000 })
       await this.page!.waitForTimeout(1000)
       const abriu = await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 5000)
@@ -823,9 +1075,17 @@ export class WinmaxRPA {
     }
   }
 
-  private async adicionarComentario(comentario: string, tentativa = 1): Promise<void> {
+  /**
+   * Aplica o comentário à linha. Devolve `true` se ficou confirmado, `false` caso
+   * contrário — quem chama trata um `false` como divergência e impede o fecho.
+   */
+  private async adicionarComentario(comentario: string, indiceLinha: number, tentativa = 1): Promise<boolean> {
     const di = 'DocumentIssue_content'
-    const maxTentativas = 2
+    // 3 tentativas (era 2): no lote de 31/08 falharam 2 de 5 comentários, um por
+    // a janela não abrir e outro por não confirmar. Ambos são intermitentes, não
+    // sistemáticos — a mesma estrutura de fatura funcionou noutras. Uma tentativa
+    // extra, precedida de estabilização do documento, cobre esses casos.
+    const maxTentativas = 3
 
     // CORRIGIDO 04/07/2026: a verificação de existência do botão de comentário era
     // IMEDIATA, sem esperar o WinMax4 desenhar o ícone (aparece só depois de um postback
@@ -847,7 +1107,7 @@ export class WinmaxRPA {
       if (tentativa < maxTentativas) {
         await this.log(`  ⏳ Botão de comentário ainda não visível (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
         await this.page!.waitForTimeout(1000)
-        return this.adicionarComentario(comentario, tentativa + 1)
+        return this.adicionarComentario(comentario, indiceLinha, tentativa + 1)
       }
       // CORRIGIDO 08/07/2026: quando o botão nunca aparece mesmo após esperar, pode
       // haver uma mensagem de erro/validação escondida do WinMax4 a bloquear o
@@ -855,7 +1115,7 @@ export class WinmaxRPA {
       // estávamos a verificar neste ponto. Log-a para diagnóstico, sem interromper.
       const erroOculto = await this.verificarErro(di)
       await this.log(`  ⚠️ Artigo sem textarea de comentário (confirmado após espera) — comentário NÃO aplicado${erroOculto ? ` | Mensagem WinMax4: "${erroOculto}"` : ''}`)
-      return
+      return false
     }
 
     // Força a ocultação do overlay em vez de apenas esperar que desapareça sozinho —
@@ -864,7 +1124,7 @@ export class WinmaxRPA {
 
     await this.page!.frameLocator('#DocumentIssue_content')
       .locator('input[id^="DetailPropertyRemarks"]')
-      .last()
+      .nth(indiceLinha)
       .click({ timeout: 10000 })
     await this.page!.waitForTimeout(1500)
     const dialogAbriu = await this.waitFor('DocumentIssueDocumentDetailRemarks_content', SEL.remarksTxt, 8000)
@@ -872,11 +1132,12 @@ export class WinmaxRPA {
 
     if (!dialogAbriu) {
       if (tentativa < maxTentativas) {
-        await this.log(`  ⏳ Janela de comentário não abriu (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
-        return this.adicionarComentario(comentario, tentativa + 1)
+        await this.log(`  ⏳ Janela de comentário não abriu (tentativa ${tentativa}/${maxTentativas}) — a estabilizar e tentar de novo...`)
+        await this.aguardarDocumentoEstavel()
+        return this.adicionarComentario(comentario, indiceLinha, tentativa + 1)
       }
       await this.log(`  ❌ Janela de comentário não abriu após ${maxTentativas} tentativas — comentário NÃO aplicado`)
-      return
+      return false
     }
 
     await this.page!.evaluate(({ txt }) => {
@@ -891,17 +1152,55 @@ export class WinmaxRPA {
     })
     await this.page!.waitForTimeout(1200)
 
-    const confirmado = await this.verificarEReabrirComentario(comentario)
+    const confirmado = await this.verificarEReabrirComentario(comentario, indiceLinha)
     if (!confirmado) {
       if (tentativa < maxTentativas) {
-        await this.log(`  ⚠️ Comentário não confirmado após aplicar (tentativa ${tentativa}/${maxTentativas}) — a tentar novamente...`)
-        return this.adicionarComentario(comentario, tentativa + 1)
+        await this.log(`  ⚠️ Comentário não confirmado após aplicar (tentativa ${tentativa}/${maxTentativas}) — a estabilizar e tentar de novo...`)
+        await this.aguardarDocumentoEstavel()
+        return this.adicionarComentario(comentario, indiceLinha, tentativa + 1)
       }
       await this.log(`  ❌ Comentário não pôde ser confirmado após ${maxTentativas} tentativas`)
-      return
+      return false
     }
 
     await this.log('  💬 Comentário adicionado e confirmado')
+
+    // CORRIGIDO 31/08/2026 — CAUSA REAL DO FALSO ERRO NO ARTIGO SEGUINTE:
+    // Confirmar o comentário dispara um postback ASP.NET no documento. Se a linha
+    // seguinte for iniciada antes de esse postback terminar, o formulário é REPOSTO
+    // a meio da introdução: o código do artigo já escrito é apagado e os campos de
+    // preço/quantidade voltam a desativados. O WinMax4 responde então "Artigo não
+    // definido ou inválido" — sobre um artigo perfeitamente válido.
+    //
+    // Provado pelos dados de 31/08 (lote de 6): nas TRÊS faturas em que o comentário
+    // foi aplicado, a linha seguinte ("TX") falhou. Na única em que o comentário
+    // FALHOU, a linha seguinte funcionou. Correlação perfeita.
+    //
+    // Confirmado também pelo diagnóstico: campo do artigo vazio, preço e quantidade
+    // desativados — o estado exato de um formulário acabado de repor.
+    await this.aguardarDocumentoEstavel()
+    return true
+  }
+
+  /**
+   * Espera que o iframe do documento fique estável após um postback.
+   * Considera-se estável quando o botão de inserir linha está presente e clicável
+   * e não há overlay de processamento ativo.
+   */
+  private async aguardarDocumentoEstavel(timeout = 15000): Promise<void> {
+    await this.page!.waitForFunction(
+      () => {
+        const f = document.getElementById('DocumentIssue_content') as HTMLIFrameElement
+        const doc = f?.contentDocument
+        if (!doc || doc.readyState !== 'complete') return false
+        const overlay = doc.getElementById('overlay_modal') as HTMLElement
+        if (overlay && overlay.offsetParent !== null) return false
+        const inserir = doc.getElementById('wucButtonInsertDocumentDetail_linkButton1') as HTMLElement
+        return !!inserir && inserir.offsetParent !== null
+      }, undefined,
+      { timeout, polling: 300 }
+    ).catch(() => {})
+    await this.page!.waitForTimeout(800)
   }
 
   private async imprimirEGuardarPDF(numPrevisto: string, tipDoc = '', clienteCodigo = ''): Promise<string> {
@@ -1061,18 +1360,7 @@ export class WinmaxRPA {
       `document.getElementById('txtDocumentDate')?.value || ''`
     ).catch(() => '') as string
 
-    // Cancela linha de edição vazia se estiver aberta
-    const temCancelar = await this.evalIn(di,
-      `!!document.getElementById('wucButtonCancelDocumentDetail_linkButton1')`
-    ) as boolean
-    if (temCancelar) {
-      await this.dismissarOverlayPreso()
-      await this.page!.frameLocator('#DocumentIssue_content')
-        .locator('#wucButtonCancelDocumentDetail_linkButton1')
-        .click()
-      await this.page!.waitForTimeout(800)
-      await this.log('  ✖️  Linha vazia cancelada')
-    }
+    await this.cancelarLinhaVazia()
 
     // Clica "Terminar" — abre DocumentIssueClose_content com opções de impressão
     await this.page!.waitForFunction(
@@ -1099,12 +1387,26 @@ export class WinmaxRPA {
       `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
     ).catch(() => '') as string
 
-    // Se não conseguiu do iframe, extrai do nome do PDF
+    // Se não conseguiu do iframe, extrai do nome do PDF.
+    //
+    // CORRIGIDO 31/08/2026: a expressão anterior era `^[A-Z]+_`, pensada para nomes
+    // como "FRB_2026_85". Quando o nome passou a incluir o código do cliente à frente
+    // ("83_FRB_2026_183"), deixou de casar — porque começa por dígitos. O resultado
+    // era um número errado gravado no Histórico: "83/FRB_2026_183" em vez de
+    // "2026/183", e um nome de download com o prefixo duplicado
+    // ("83_FRB_83_FRB_2026_183.pdf", visível nos erros de consola de 31/08).
+    //
+    // Passa a extrair pelo padrão do próprio número — ano_número no fim do nome —
+    // em vez de depender de quantos prefixos existem antes.
     if (!numDoc && localPDF) {
       const nomePDF = path.basename(localPDF, '.pdf')
-      // Remove o prefixo do tipo (ex: FRB_ → 2026_85 → 2026/85)
-      const semTipo = nomePDF.replace(/^[A-Z]+_/, '')
-      numDoc = semTipo.replace('_', '/') // 2026_85 → 2026/85
+      const m = nomePDF.match(/(\d{4})_(\d+)$/)   // ..._2026_183 -> 2026/183
+      if (m) {
+        numDoc = `${m[1]}/${m[2]}`
+      } else {
+        // Sem padrão reconhecível, é preferível não inventar um número.
+        await this.log(`  ⚠️ Não foi possível deduzir o número do documento a partir de "${nomePDF}"`)
+      }
     }
 
     // Renomeia o PDF com o número definitivo (ao gravar só se conhece o previsto).
@@ -1133,34 +1435,145 @@ export class WinmaxRPA {
     return { numDoc: numDoc || 'EMITIDO', localPDF: caminhoFinal, dataDocumento }
   }
 
+  /**
+   * Lê o número já atribuído ao documento em edição, se existir.
+   * Serve para o utilizador saber exatamente qual documento ficou em aberto no
+   * WinMax4 e o poder localizar para terminar à mão.
+   */
+  private async numeroDocumentoAtual(): Promise<string | null> {
+    try {
+      const num = await this.evalIn('DocumentIssue_content',
+        `document.getElementById('txtDocumentNumber')?.value?.replace(/^-/,'').trim() || ''`
+      ) as string
+      if (num) return num
+      const previsto = await this.evalIn('DocumentIssue_content',
+        `document.getElementById('lblNextDocumentNumber')?.innerText?.replace(/[()]/g,'').trim() || ''`
+      ) as string
+      return previsto || null
+    } catch {
+      return null
+    }
+  }
+
   async criarFatura(fatura: Fatura): Promise<ResultadoFatura> {
     const inicio = Date.now()
     const errosLinhas: ErroLinha[] = []
+    this.divergencias = []
+
+    /** Sai do documento SEM o fechar e SEM apagar nada — fica em aberto no WinMax4. */
+    const deixarEmAberto = async (motivo: string): Promise<ResultadoFatura> => {
+      const numAtribuido = await this.numeroDocumentoAtual()
+      await this.log(`  🔓 Documento DEIXADO EM ABERTO no WinMax4${numAtribuido ? ` (nº ${numAtribuido})` : ''} — verificar e terminar manualmente`)
+
+      // CORRIGIDO 31/08/2026: aqui reiniciava-se o browser. Foi má ideia — com um
+      // documento por fechar, o "Terminar sessão" não é alcançável, e o WinMax4
+      // recusa novo login enquanto a sessão anterior estiver ativa. Confirmado em
+      // produção (31/08): o reinício falhou com "Toolbox não carregou após
+      // autenticação" e as DUAS faturas seguintes gastaram 5 minutos cada a
+      // procurar num Toolbox de sessão morta.
+      //
+      // A sessão atual continua viva e funcional — basta sair da listagem para a
+      // fatura seguinte poder abrir um documento novo, sem tocar no que ficou aberto.
+      try {
+        await this.fecharListagem()
+        await this.page!.waitForTimeout(1500)
+      } catch (e) {
+        await this.log(`  ⚠️ Não foi possível fechar a listagem: ${e}`)
+      }
+      return {
+        index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
+        tipo_documento: fatura.tipo_documento, sucesso: false,
+        numero_documento: numAtribuido || undefined,
+        em_aberto: true,
+        total_linhas: fatura.linhas.length, linhas_ok: errosLinhas.length ? fatura.linhas.length - errosLinhas.length : fatura.linhas.length,
+        erros_linhas: errosLinhas,
+        erro: `${motivo} — documento deixado EM ABERTO para verificação manual`,
+        duracao_ms: Date.now() - inicio,
+      }
+    }
 
     await this.abrirNovaFatura()
     await this.preencherCabecalho(fatura)
     await this.log(`  📋 ${fatura.linhas.length} linha(s)`)
 
     for (let i = 0; i < fatura.linhas.length; i++) {
+      if (await this.abortoPedido()) {
+        return deixarEmAberto('Aborto pedido pelo utilizador a meio das linhas')
+      }
       const linha = fatura.linhas[i]
       try {
+        // FASE 1 — só linhas. Os comentários ficam para depois de TODAS estarem
+        // inseridas; ver a nota extensa antes da fase 2.
         await this.adicionarLinhaArtigo(linha, i)
-        if (linha.comentario?.trim()) await this.adicionarComentario(linha.comentario)
       } catch (err) {
         if (err instanceof ErroLinhaArtigo) {
           errosLinhas.push({ linha: err.linha, artigo_ref: err.artigo_ref, mensagem: err.message })
           await this.log(`  ❌ ${err.message}`)
-          await this.log('  ⛔ A abandonar documento')
-          await this.abandonarDocumento()
-          return {
-            index: 0, fatura_id: fatura.fatura_id, cliente_codigo: fatura.cliente_codigo, cliente_nome: fatura.cliente_nome,
-            tipo_documento: fatura.tipo_documento, sucesso: false,
-            total_linhas: fatura.linhas.length, linhas_ok: i,
-            erros_linhas: errosLinhas, erro: err.message, duracao_ms: Date.now() - inicio,
-          }
+          return deixarEmAberto(err.message)
         }
         throw err
       }
+    }
+
+    // FASE 2 — comentários, só depois de TODAS as linhas estarem inseridas.
+    //
+    // CORRIGIDO 31/08/2026 — CAUSA REAL, PROVADA COM SEIS OBSERVAÇÕES:
+    // Aplicar um comentário dispara um recarregamento interno do WinMax4 que repõe
+    // o formulário de introdução de linha. Quando a linha SEGUINTE era iniciada
+    // logo a seguir, o código do artigo era apagado a meio e o WinMax4 respondia
+    // "Artigo não definido ou inválido" — sobre um artigo válido (o "TX").
+    //
+    // A correlação foi perfeita em seis faturas: sempre que o comentário foi
+    // aplicado, a linha seguinte falhou; nas duas em que o comentário falhou, a
+    // linha seguinte passou sem problema. O diagnóstico confirmou o mecanismo:
+    // campo do artigo vazio e preço/quantidade desativados — um formulário acabado
+    // de repor.
+    //
+    // Esperar pela estabilização do documento não bastou. A solução é estrutural:
+    // como o botão de comentário existe POR LINHA na grelha, os comentários podem
+    // ser aplicados no fim, quando já não há mais inserções para estragar. O
+    // recarregamento passa a ser inofensivo.
+    const linhasComComentario = fatura.linhas
+      .map((linha, idx) => ({ linha, idx }))
+      .filter(({ linha }) => linha.comentario?.trim())
+
+    // Fecha a linha em edição antes de contar e de mexer nas observações
+    await this.cancelarLinhaVazia()
+    await this.aguardarDocumentoEstavel()
+
+    // VALIDAÇÃO: o documento tem mesmo todas as linhas do Excel?
+    //
+    // Acrescentado 31/08/2026. Até aqui, uma linha que não entrasse na grelha —
+    // por um recarregamento a meio, um clique perdido, o que fosse — passava
+    // despercebida e o documento era fechado a menos. O contador usa o mesmo
+    // seletor validado pelo diagnóstico (contou corretamente as linhas inseridas).
+    //
+    // Não substitui a validação do TOTAL, que continua por fazer por falta do
+    // identificador do campo no WinMax4 — mas apanha o caso mais grave, que é
+    // faltarem linhas inteiras.
+    const linhasNaGrelha = await this.evalIn('DocumentIssue_content',
+      `document.querySelectorAll('[id^="DeleteCompound"]').length`
+    ).catch(() => -1) as number
+
+    if (linhasNaGrelha >= 0 && linhasNaGrelha !== fatura.linhas.length) {
+      await this.registarDivergencia(
+        `o documento tem ${linhasNaGrelha} linha(s) mas o ficheiro indica ${fatura.linhas.length}`
+      )
+    } else if (linhasNaGrelha >= 0) {
+      await this.log(`  ✅ Validação: ${linhasNaGrelha} linha(s) na grelha, conforme o ficheiro`)
+    }
+
+    for (const { linha, idx } of linhasComComentario) {
+      const okComentario = await this.adicionarComentario(linha.comentario!, idx)
+      // Uma falha aqui é divergência: o documento não é fechado, fica em aberto.
+      if (!okComentario) {
+        await this.registarDivergencia(`comentário da linha ${idx + 1} (${linha.artigo_ref}) não foi aplicado`)
+      }
+    }
+
+    // Nada é fechado enquanto houver divergências por resolver.
+    if (this.divergencias.length > 0) {
+      return deixarEmAberto(`${this.divergencias.length} divergência(s): ${this.divergencias.join('; ')}`)
     }
 
     const { numDoc, localPDF, dataDocumento } = await this.terminarDocumento(fatura)
@@ -1184,6 +1597,24 @@ export class WinmaxRPA {
     await this.log(`\n📋 ${faturas.length} fatura(s)`)
 
     for (let i = 0; i < faturas.length; i++) {
+      // Aborto pedido pelo utilizador — para entre faturas, deixando as restantes
+      // por processar (nenhum documento fica a meio por causa disto).
+      if (await this.abortoPedido()) {
+        await this.log(`\n⛔ ABORTADO pelo utilizador — ${faturas.length - i} fatura(s) por processar`)
+        break
+      }
+
+      // CORRIGIDO 31/08/2026: quando a sessão do WinMax4 morre, o Toolbox fica vazio
+      // e TODAS as faturas seguintes falham — mas cada uma gastava ~5 minutos a
+      // percorrer 11 páginas duas vezes antes de desistir. No lote de 31/08 foram
+      // 20 minutos a bater numa porta fechada, com zero hipóteses de sucesso.
+      // Verifica-se antes de cada fatura; se a sessão caiu, termina já o lote.
+      if (i > 0 && !(await this.sessaoViva())) {
+        await this.log(`\n⛔ SESSÃO DO WINMAX4 PERDIDA — lote interrompido com ${faturas.length - i} fatura(s) por processar.`)
+        await this.log('   Volta a submeter o ficheiro: as faturas já emitidas serão ignoradas pela deteção de duplicados.')
+        break
+      }
+
       const fatura = faturas[i]
       await this.log(`\n[${i+1}/${faturas.length}] ${fatura.cliente_nome} | ${fatura.tipo_documento}`)
 

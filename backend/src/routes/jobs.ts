@@ -90,4 +90,18 @@ router.post('/sync', async (req: Request, res: Response) => {
   res.json({ jobId, mensagem: forceCompleto ? 'Sync COMPLETO iniciada' : 'Sync iniciada' })
 })
 
+// POST /api/jobs/:id/abortar — pede a interrupção de um job em curso.
+//
+// Não mata o processo: levanta uma bandeira que o RPA consulta entre faturas e
+// entre linhas. Assim nenhum documento fica a meio por causa do aborto — o que
+// estiver em curso é deixado EM ABERTO no WinMax4, para verificação manual.
+router.post('/:id/abortar', async (req: Request, res: Response) => {
+  try {
+    await db().collection('jobs').doc(req.params.id).update({ abortar: true })
+    res.json({ ok: true, mensagem: 'Aborto pedido — o processo para na próxima verificação' })
+  } catch (err) {
+    res.status(500).json({ erro: String(err) })
+  }
+})
+
 export default router
