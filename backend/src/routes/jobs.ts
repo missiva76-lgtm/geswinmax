@@ -6,6 +6,7 @@ import * as fs from 'fs'
 import * as admin from 'firebase-admin'
 import { v4 as uuidv4 } from 'uuid'
 import { db, updateJob } from '../services/firebase'
+import { keepAliveInicio, keepAliveFim } from '../services/keepAlive'
 import { processarEmissaoJob } from '../jobs/emissaoJob'
 import { syncWinmax } from '../sync/syncArtigos'
 
@@ -39,7 +40,12 @@ router.post('/emissao', upload.single('excel'), async (req: Request, res: Respon
   })
 
   // Processa em background (não bloqueia o request)
-  processarEmissaoJob(jobId, req.file.path).catch(() => {})
+  // keepAlive: ver services/keepAlive.ts — impede a suspensão da instância do
+  // Render enquanto o trabalho corre em segundo plano.
+  const ka = keepAliveInicio('emissao')
+  processarEmissaoJob(jobId, req.file.path)
+    .catch(() => {})
+    .finally(() => keepAliveFim(ka))
 
   res.json({ jobId, estado: 'pendente' })
 })
@@ -78,6 +84,7 @@ router.post('/sync', async (req: Request, res: Response) => {
   // CORRIGIDO 28/07/2026: `concluido_em` só era gravado nas emissões, nunca nas
   // sincronizações — pelo que o Dashboard não tinha forma de saber QUANDO uma
   // sincronização terminou (só quando arrancou). Passa a ser registado aqui.
+  const ka2 = keepAliveInicio('sync')
   syncWinmax(jobId, { forceCompleto, parte })
     .then(() => updateJob(jobId, {
       estado: 'concluido', progresso: 100,
@@ -87,6 +94,7 @@ router.post('/sync', async (req: Request, res: Response) => {
       estado: 'erro', erro_geral: String(e),
       concluido_em: admin.firestore.FieldValue.serverTimestamp(),
     }))
+    .finally(() => keepAliveFim(ka2))
   res.json({ jobId, mensagem: forceCompleto ? 'Sync COMPLETO iniciada' : 'Sync iniciada' })
 })
 

@@ -6,6 +6,8 @@ import * as fs from 'fs'
 import * as cron from 'node-cron'
 import { initFirebase, getConfig, db } from './services/firebase'
 import { logger } from './services/logger'
+import { iniciarWatchdog, fecharJobsPendurados } from './services/jobsWatchdog'
+import { keepAliveEstado } from './services/keepAlive'
 import { syncWinmax } from './sync/syncArtigos'
 import { syncArquivoDigital } from './sync/syncArquivoDigital'
 import { syncSAFT } from './sync/syncSAFT'
@@ -48,10 +50,20 @@ app.use('/api/pdfs', express.static(path.join(process.cwd(), 'pdfs'), {
   }
 }))
 
+// /health é também o alvo dos pings do keep-alive (ver services/keepAlive.ts),
+// pelo que inclui o estado do keep-alive — útil para confirmar em produção que
+// os pings estão a acontecer durante uma sincronização.
 app.get('/health', (_req: express.Request, res: express.Response) => res.json({
   status: 'ok', versao: '1.0.0', app: 'GesWinmax Backend',
   timestamp: new Date().toISOString(),
+  keep_alive: keepAliveEstado(),
 }))
+
+// POST /api/jobs-watchdog — força a verificação de jobs pendurados (diagnóstico)
+app.post('/api/jobs-watchdog', async (_req: express.Request, res: express.Response) => {
+  const fechados = await fecharJobsPendurados()
+  res.json({ ok: true, fechados })
+})
 
 app.get('/debug-firestore', async (_req: express.Request, res: express.Response) => {
   try {
@@ -131,6 +143,9 @@ app.listen(PORT, async () => {
   logger.info(`║  GesWinmax Backend — porta ${PORT}       ║`)
   logger.info(`╚══════════════════════════════════════╝\n`)
   logger.info('✅ Backend pronto — sync manual disponível via API')
+  // Fecha jobs que ficaram em "ativo" por o processo ter sido suspenso a meio
+  // (ver services/jobsWatchdog.ts) e repete a verificação a cada 30 min.
+  iniciarWatchdog()
 })
 
 // Evita crash por erros não tratados — mantém o servidor vivo para diagnóstico

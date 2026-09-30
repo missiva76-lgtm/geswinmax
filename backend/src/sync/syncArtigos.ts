@@ -64,9 +64,11 @@ async function loginWinmax(page: Page, config: any, log?: (msg: string) => Promi
   if (aindaLogin) {
     const erro = await page.evaluate(() => {
       const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      return f?.contentDocument?.body?.innerText?.substring(0, 200) || ''
+      return f?.contentDocument?.body?.innerText?.replace(/\s+/g, ' ').trim() || ''
     }).catch(() => '')
-    await passo(`⚠️ ainda no ecrã de login — resposta do WinMax4: ${erro.slice(0, 120)}`)
+    // 600 caracteres: o aviso relevante aparece DEPOIS dos rótulos do formulário,
+    // e com 120 ficava cortado precisamente onde interessava ("Atenção Utilizad…")
+    await passo(`⚠️ ainda no ecrã de login — resposta do WinMax4: ${erro.slice(0, 600)}`)
   }
 
   await passo('login 5/5 — a aguardar o Toolbox')

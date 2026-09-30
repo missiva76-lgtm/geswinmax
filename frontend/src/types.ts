@@ -1,7 +1,9 @@
 export interface Job {
   id: string
   tipo: 'emissao' | 'sync' | 'arquivo' | 'saft'
-  estado: 'pendente' | 'ativo' | 'concluido' | 'erro'
+  // 'interrompido': o processo do backend foi suspenso/morto antes de concluir
+  // e a guarda do servidor fechou o job (ver backend services/jobsWatchdog.ts).
+  estado: 'pendente' | 'ativo' | 'concluido' | 'erro' | 'cancelado' | 'interrompido'
   progresso: number
   log: string[]
   criado_em: { seconds: number }

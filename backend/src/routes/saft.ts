@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import * as admin from 'firebase-admin'
 import { db } from '../services/firebase'
+import { keepAliveInicio, keepAliveFim } from '../services/keepAlive'
 import { syncSAFT } from '../sync/syncSAFT'
 
 const router = Router()
@@ -32,11 +33,14 @@ router.post('/sync', async (req: Request, res: Response) => {
   })
 
   // Ver nota em routes/jobs.ts sobre `concluido_em`.
+  // keepAlive: ver services/keepAlive.ts
+  const ka = keepAliveInicio('saft')
   syncSAFT(dataInicio, dataFim, jobRef.id)
     .then(() => jobRef.update({
       estado: 'concluido', progresso: 100,
       concluido_em: admin.firestore.FieldValue.serverTimestamp(),
     }))
+    .finally(() => keepAliveFim(ka))
     .catch(async (e) => jobRef.update({
       estado: 'erro', erro_geral: String(e),
       concluido_em: admin.firestore.FieldValue.serverTimestamp(),

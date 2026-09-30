@@ -63,18 +63,43 @@ export const db = () => {
   return firestoreInstance
 }
 
+// CORRIGIDO 30/09/2026 — porque é que estas duas funções mudaram:
+//
+// 1) ESPELHO NA CONSOLA. Todo o log dos jobs era escrito APENAS no Firestore.
+//    Quando um job morria ou era congelado (ver services/keepAlive.ts), o log
+//    ficava numa só linha e não havia mais nenhum registo em lado nenhum — o
+//    diagnóstico de 29/09/2026 ficou sem dados por esta razão. Passa a ser
+//    escrito também na consola, que o Render guarda de forma independente.
+//
+// 2) ESCRITAS PROTEGIDAS. Uma falha de escrita no Firestore (quota, rede,
+//    permissões) rebentava para dentro do RPA e interrompia o trabalho — ou,
+//    pior, fazia falhar também a gravação do estado final, deixando o job
+//    eternamente em "ativo". Passa a ser registada na consola e o trabalho
+//    continua: o log é um meio de diagnóstico, não pode ser o que trava o sync.
+
 export async function updateJob(jobId: string, data: Record<string, unknown>) {
-  await db().collection('jobs').doc(jobId).update({
-    ...data,
-    atualizado_em: admin.firestore.FieldValue.serverTimestamp(),
-  })
+  try {
+    await db().collection('jobs').doc(jobId).update({
+      ...data,
+      atualizado_em: admin.firestore.FieldValue.serverTimestamp(),
+    })
+  } catch (e) {
+    console.error(`[job ${jobId}] FALHA ao gravar estado no Firestore:`, e)
+    console.error(`[job ${jobId}] dados que não foram gravados:`, JSON.stringify(data).slice(0, 500))
+  }
 }
 
 export async function appendJobLog(jobId: string, msg: string) {
-  await db().collection('jobs').doc(jobId).update({
-    log: admin.firestore.FieldValue.arrayUnion(`[${new Date().toISOString()}] ${msg}`),
-    atualizado_em: admin.firestore.FieldValue.serverTimestamp(),
-  })
+  // Consola primeiro: mesmo que o Firestore falhe, a linha fica nos logs do Render.
+  console.log(`[job ${jobId}] ${msg}`)
+  try {
+    await db().collection('jobs').doc(jobId).update({
+      log: admin.firestore.FieldValue.arrayUnion(`[${new Date().toISOString()}] ${msg}`),
+      atualizado_em: admin.firestore.FieldValue.serverTimestamp(),
+    })
+  } catch (e) {
+    console.error(`[job ${jobId}] FALHA ao gravar linha de log no Firestore:`, e)
+  }
 }
 
 export async function uploadPDFToStorage(buffer: Buffer, nomeFicheiro: string, jobId: string): Promise<string> {

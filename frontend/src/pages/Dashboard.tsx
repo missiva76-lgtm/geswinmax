@@ -145,14 +145,16 @@ export default function Dashboard() {
                 {TIPO_LABEL[job.tipo] || job.tipo}
               </span>
               <p className="flex-1 text-xs text-gray-500">{fmtDate(job.criado_em)}</p>
-              {job.estado === 'concluido' && <CheckCircle size={15} className="text-teal-500"/>}
-              {job.estado === 'erro'      && <AlertCircle size={15} className="text-red-500"/>}
-              {job.estado === 'ativo'     && <Clock       size={15} className="text-blue-500 animate-pulse"/>}
+              {job.estado === 'concluido'    && <CheckCircle size={15} className="text-teal-500"/>}
+              {job.estado === 'erro'         && <AlertCircle size={15} className="text-red-500"/>}
+              {job.estado === 'interrompido' && <AlertCircle size={15} className="text-amber-500"/>}
+              {job.estado === 'ativo'        && <Clock       size={15} className="text-blue-500 animate-pulse"/>}
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium
-                ${job.estado === 'concluido' ? 'bg-teal-50 text-teal-700' :
-                  job.estado === 'erro'      ? 'bg-red-50 text-red-600'   :
-                  job.estado === 'ativo'     ? 'bg-blue-50 text-blue-600' :
-                                              'bg-gray-50 text-gray-600'}`}>
+                ${job.estado === 'concluido'    ? 'bg-teal-50 text-teal-700'   :
+                  job.estado === 'erro'         ? 'bg-red-50 text-red-600'     :
+                  job.estado === 'interrompido' ? 'bg-amber-50 text-amber-700' :
+                  job.estado === 'ativo'        ? 'bg-blue-50 text-blue-600'   :
+                                                 'bg-gray-50 text-gray-600'}`}>
                 {job.estado}
               </span>
             </button>

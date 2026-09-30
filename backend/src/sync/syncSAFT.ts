@@ -305,15 +305,20 @@ export async function syncSAFT(
       await dialog.accept().catch(() => {})
     })
 
-    // Login
-// Login WinMax4
-    // O WinMax4 abre sempre no MainPage com um iframe de autenticação UserAuthentication_content
+    // Login no WinMax4 — abre sempre no MainPage com o iframe UserAuthentication_content.
     // Campos: txtUserLogin / txtUserPassword — botão: wucButtonConfirm_linkButton1
+    //
+    // CORRIGIDO 19/08/2026: as etapas do login não apareciam no log, pelo que uma
+    // falha aqui deixava apenas a linha inicial e nenhuma pista de onde parou —
+    // exatamente o que aconteceu nas sincronizações automáticas das últimas noites.
+    const passo = async (msg: string) => { await log(`  · ${msg}`) }
+
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
+    await passo('login 1/5 — a abrir a página do WinMax4')
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(2000)
 
-    // Aguarda o iframe de autenticação
+    await passo('login 2/5 — a aguardar o formulário de autenticação')
     await page.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'), undefined,
       { timeout: 60000 }
@@ -331,7 +336,7 @@ export async function syncSAFT(
     }, { user: config.utilizador || '', pass: config.password || '' })
     await page.waitForTimeout(500)
 
-    // Clica Confirmar com Promise.all para evitar race condition
+    await passo('login 3/5 — credenciais preenchidas, a confirmar')
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
       page.evaluate(() => {
@@ -339,7 +344,20 @@ export async function syncSAFT(
         ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
       })
     ])
+    await passo('login 4/5 — a aguardar o carregamento pós-autenticação')
     await page.waitForTimeout(2000)
+
+    // Se continuar no ecrã de autenticação, o WinMax4 costuma mostrar aí a razão.
+    // Capturamos 600 caracteres (e não 150 como antes) porque o aviso relevante
+    // aparece DEPOIS dos rótulos do formulário — nas falhas anteriores a mensagem
+    // ficava cortada precisamente em "Atenção Utilizad…", que era o que interessava.
+    const aindaNoLogin = await page.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      return f?.contentDocument?.body?.innerText?.replace(/\s+/g, ' ').trim() || ''
+    }).catch(() => '')
+    if (aindaNoLogin) await passo(`⚠️ ainda no ecrã de login — resposta: ${aindaNoLogin.slice(0, 600)}`)
+
+    await passo('login 5/5 — a aguardar o Toolbox')
     await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 60000 })
     await log('✅ Login OK')
 

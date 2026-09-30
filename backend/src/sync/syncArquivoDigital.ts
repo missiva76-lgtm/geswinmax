@@ -237,11 +237,18 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
 // Login WinMax4
     // O WinMax4 abre sempre no MainPage com um iframe de autenticação UserAuthentication_content
     // Campos: txtUserLogin / txtUserPassword — botão: wucButtonConfirm_linkButton1
+    //
+    // CORRIGIDO 20/09/2026: etapas do login registadas no log (igual ao SAF-T).
+    // Antes escrevia "Login OK" sem confirmar nada — uma recusa do WinMax4 só
+    // rebentava mais à frente, com um timeout sem pista da causa.
+    const passo = async (msg: string) => { await log(`  · ${msg}`) }
+
     const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
+    await passo('login 1/5 — a abrir a página do WinMax4')
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(2000)
 
-    // Aguarda o iframe de autenticação
+    await passo('login 2/5 — a aguardar o formulário de autenticação')
     await page.waitForFunction(
       () => !!document.getElementById('UserAuthentication_content'), undefined,
       { timeout: 60000 }
@@ -259,13 +266,27 @@ export async function syncArquivoDigital(jobId?: string, options?: { forceReimpo
     }, { user: config.utilizador || '', pass: config.password || '' })
     await page.waitForTimeout(500)
 
-    // Clica Confirmar
-    await page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-    })
-    await page.waitForLoadState('networkidle')
+    await passo('login 3/5 — credenciais preenchidas, a confirmar')
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
+      page.evaluate(() => {
+        const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+        ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
+      })
+    ])
+    await passo('login 4/5 — a aguardar o carregamento pós-autenticação')
     await page.waitForTimeout(2000)
+
+    // Se continuar no ecrã de autenticação, o WinMax4 mostra aí a razão
+    // (600 caracteres: o aviso aparece depois dos rótulos do formulário).
+    const aindaNoLogin = await page.evaluate(() => {
+      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
+      return f?.contentDocument?.body?.innerText?.replace(/\s+/g, ' ').trim() || ''
+    }).catch(() => '')
+    if (aindaNoLogin) await passo(`⚠️ ainda no ecrã de login — resposta: ${aindaNoLogin.slice(0, 600)}`)
+
+    await passo('login 5/5 — a aguardar o Toolbox')
+    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 60000 })
     await log('✅ Login OK')
 
     await abrirArquivoDigital(page, log)

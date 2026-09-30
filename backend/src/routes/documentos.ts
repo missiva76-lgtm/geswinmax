@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import * as admin from 'firebase-admin'
 import { db } from '../services/firebase'
+import { keepAliveInicio, keepAliveFim } from '../services/keepAlive'
 import { syncDocumentos } from '../sync/syncDocumentos'
 import { logger } from '../services/logger'
 
@@ -32,11 +33,14 @@ router.post('/sync', async (_req: Request, res: Response) => {
     criado_em: admin.firestore.FieldValue.serverTimestamp(),
   })
 
+  // keepAlive: ver services/keepAlive.ts
+  const ka = keepAliveInicio('documentos')
   syncDocumentos(jobRef.id)
     .then(() => jobRef.update({
       estado: 'concluido', progresso: 100,
       concluido_em: admin.firestore.FieldValue.serverTimestamp(),
     }))
+    .finally(() => keepAliveFim(ka))
     .catch(async (e) => jobRef.update({
       estado: 'erro', erro_geral: String(e),
       concluido_em: admin.firestore.FieldValue.serverTimestamp(),
