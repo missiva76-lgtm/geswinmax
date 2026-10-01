@@ -13,67 +13,13 @@ import * as path from 'path'
 import { db, appendJobLog, getConfig } from '../services/firebase'
 import { logger } from '../services/logger'
 import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
+import { loginWinmax } from '../rpa/loginWinmax'
 
 const BASE = 'https://app102.winmax4.com'
 
-// CORRIGIDO 30/07/2026: o login tem cinco etapas distintas, mas nenhuma aparecia no
-// log do job — só na consola do servidor, invisível para quem usa a aplicação. Quando
-// falhou com "TimeoutError: 30000ms" (um valor que não corresponde a nenhuma espera
-// deste ficheiro, todas de 90s), o log tinha apenas duas linhas e não havia forma de
-// saber em que etapa parou. Passa a registar cada passo, para a próxima falha ser
-// diagnosticável de imediato em vez de exigir mais uma ronda de tentativas.
-async function loginWinmax(page: Page, config: any, log?: (msg: string) => Promise<void> | void): Promise<void> {
-  const passo = async (msg: string) => { console.log(`[Sync] ${msg}`); await log?.(`  · ${msg}`) }
+// O login passou a viver em rpa/loginWinmax.ts — ver o cabeçalho desse ficheiro
+// para a razão (formulário submetido vazio por condição de corrida, 01/10/2026).
 
-  const url = `${BASE}/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-  await passo('login 1/5 — a abrir a página do WinMax4')
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 })
-  await page.waitForTimeout(3000)
-
-  await passo('login 2/5 — a aguardar o formulário de autenticação')
-  await page.waitForFunction(
-    () => !!document.getElementById('UserAuthentication_content'), undefined,
-    { timeout: 90000 }
-  )
-
-  await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
-    const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-    const doc = f?.contentDocument
-    const u   = doc?.getElementById('txtUserLogin')    as HTMLInputElement
-    const p   = doc?.getElementById('txtUserPassword') as HTMLInputElement
-    if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
-    if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
-  }, { user: config.utilizador || '', pass: config.password || '' })
-
-  await passo('login 3/5 — credenciais preenchidas, a confirmar')
-  await page.waitForTimeout(300)
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 90000 }).catch((e) => {
-      console.log('[Sync] waitForNavigation falhou (pode ser normal):', e.message)
-    }),
-    page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-    })
-  ])
-  await passo('login 4/5 — a aguardar o carregamento pós-autenticação')
-  await page.waitForTimeout(3000)
-  
-  // Verifica se ainda está no ecrã de login (credenciais erradas)
-  const aindaLogin = await page.evaluate(() => !!document.getElementById('UserAuthentication_content')).catch(() => false)
-  if (aindaLogin) {
-    const erro = await page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      return f?.contentDocument?.body?.innerText?.replace(/\s+/g, ' ').trim() || ''
-    }).catch(() => '')
-    // 600 caracteres: o aviso relevante aparece DEPOIS dos rótulos do formulário,
-    // e com 120 ficava cortado precisamente onde interessava ("Atenção Utilizad…")
-    await passo(`⚠️ ainda no ecrã de login — resposta do WinMax4: ${erro.slice(0, 600)}`)
-  }
-
-  await passo('login 5/5 — a aguardar o Toolbox')
-  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 90000 })
-}
 
 // Abre uma listagem, muda para CSV e faz download
 async function exportarCSV(
@@ -321,7 +267,6 @@ export async function syncWinmax(
       })
 
       await loginWinmax(page, config, log)
-      await log('✅ Login OK')
     }
 
     /**

@@ -25,6 +25,7 @@ import * as path from 'path'
 import { db, appendJobLog, getConfig } from '../services/firebase'
 import { logger } from '../services/logger'
 import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
+import { loginWinmax } from '../rpa/loginWinmax'
 
 interface VendaMes {
   mes: string      // YYYY-MM
@@ -305,61 +306,9 @@ export async function syncSAFT(
       await dialog.accept().catch(() => {})
     })
 
-    // Login no WinMax4 — abre sempre no MainPage com o iframe UserAuthentication_content.
-    // Campos: txtUserLogin / txtUserPassword — botão: wucButtonConfirm_linkButton1
-    //
-    // CORRIGIDO 19/08/2026: as etapas do login não apareciam no log, pelo que uma
-    // falha aqui deixava apenas a linha inicial e nenhuma pista de onde parou —
-    // exatamente o que aconteceu nas sincronizações automáticas das últimas noites.
-    const passo = async (msg: string) => { await log(`  · ${msg}`) }
-
-    const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-    await passo('login 1/5 — a abrir a página do WinMax4')
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await page.waitForTimeout(2000)
-
-    await passo('login 2/5 — a aguardar o formulário de autenticação')
-    await page.waitForFunction(
-      () => !!document.getElementById('UserAuthentication_content'), undefined,
-      { timeout: 60000 }
-    )
-
-    // Preenche no iframe de autenticação
-    await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
-      const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      const doc = f?.contentDocument
-      if (!doc) return
-      const u = doc.getElementById('txtUserLogin')   as HTMLInputElement
-      const p = doc.getElementById('txtUserPassword') as HTMLInputElement
-      if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
-      if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
-    }, { user: config.utilizador || '', pass: config.password || '' })
-    await page.waitForTimeout(500)
-
-    await passo('login 3/5 — credenciais preenchidas, a confirmar')
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
-      page.evaluate(() => {
-        const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-        ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-      })
-    ])
-    await passo('login 4/5 — a aguardar o carregamento pós-autenticação')
-    await page.waitForTimeout(2000)
-
-    // Se continuar no ecrã de autenticação, o WinMax4 costuma mostrar aí a razão.
-    // Capturamos 600 caracteres (e não 150 como antes) porque o aviso relevante
-    // aparece DEPOIS dos rótulos do formulário — nas falhas anteriores a mensagem
-    // ficava cortada precisamente em "Atenção Utilizad…", que era o que interessava.
-    const aindaNoLogin = await page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      return f?.contentDocument?.body?.innerText?.replace(/\s+/g, ' ').trim() || ''
-    }).catch(() => '')
-    if (aindaNoLogin) await passo(`⚠️ ainda no ecrã de login — resposta: ${aindaNoLogin.slice(0, 600)}`)
-
-    await passo('login 5/5 — a aguardar o Toolbox')
-    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 60000 })
-    await log('✅ Login OK')
+    // Login centralizado em rpa/loginWinmax.ts (ver cabeçalho: o formulário era
+    // submetido vazio por condição de corrida — diagnosticado a 01/10/2026).
+    await loginWinmax(page, config, log)
 
     const nomeFicheiro = await exportarSAFT(page, di, df, log)
     await log(`📥 SAF-T exportado: ${nomeFicheiro}`)

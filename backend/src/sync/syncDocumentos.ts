@@ -35,6 +35,7 @@ import * as path from 'path'
 import { db, appendJobLog, getConfig } from '../services/firebase'
 import { logger } from '../services/logger'
 import { clicarToolboxPorTitulo } from '../rpa/toolboxHelper'
+import { loginWinmax } from '../rpa/loginWinmax'
 
 const BASE = 'https://app102.winmax4.com'
 const URL_LISTAGEM = '/MReports/Transactions/SalesIssuedDocuments.aspx'
@@ -57,57 +58,9 @@ function normalizarData(v?: string): string {
   return s
 }
 
-async function loginWinmax(page: Page, config: any, log: (msg: string) => Promise<void>): Promise<void> {
-  const passo = async (msg: string) => { await log(`  · ${msg}`) }
+// O login passou a viver em rpa/loginWinmax.ts — ver o cabeçalho desse ficheiro
+// para a razão (formulário submetido vazio por condição de corrida, 01/10/2026).
 
-  const url = `${BASE}/MainPage.aspx?CompanyCode=${config.company_code || 'AUTOAVENIDA'}`
-  await passo('login 1/5 — a abrir a página do WinMax4')
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 })
-  await page.waitForTimeout(3000)
-
-  await passo('login 2/5 — a aguardar o formulário de autenticação')
-  await page.waitForFunction(
-    () => !!document.getElementById('UserAuthentication_content'), undefined,
-    { timeout: 90000 }
-  )
-
-  await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
-    const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-    const doc = f?.contentDocument
-    const u   = doc?.getElementById('txtUserLogin')    as HTMLInputElement
-    const p   = doc?.getElementById('txtUserPassword') as HTMLInputElement
-    if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
-    if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
-  }, { user: config.utilizador || '', pass: config.password || '' })
-
-  await passo('login 3/5 — credenciais preenchidas, a confirmar')
-  await page.waitForTimeout(300)
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => {}),
-    page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-    })
-  ])
-
-  await passo('login 4/5 — a aguardar o carregamento pós-autenticação')
-  await page.waitForTimeout(3000)
-  const aindaLogin = await page.evaluate(
-    () => !!document.getElementById('UserAuthentication_content')
-  ).catch(() => false)
-  if (aindaLogin) {
-    const erro = await page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      return f?.contentDocument?.body?.innerText?.replace(/\s+/g, ' ').trim() || ''
-    }).catch(() => '')
-    // 600 caracteres: o aviso relevante aparece DEPOIS dos rótulos do formulário,
-    // e com 120 ficava cortado precisamente onde interessava ("Atenção Utilizad…")
-    await passo(`⚠️ ainda no ecrã de login — resposta do WinMax4: ${erro.slice(0, 600)}`)
-  }
-
-  await passo('login 5/5 — a aguardar o Toolbox')
-  await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 90000 })
-}
 
 /** Exporta a listagem em CSV e devolve o caminho do ficheiro descarregado. */
 async function exportarCSV(
@@ -274,7 +227,6 @@ export async function syncDocumentos(jobId?: string): Promise<void> {
     })
 
     await loginWinmax(page, config, log)
-    await log('✅ Login OK')
 
     // Exporta PRIMEIRO — só se limpa a coleção depois de ter os dados em mão.
     // A ordem inversa já causou perda total de dados noutro sync quando a

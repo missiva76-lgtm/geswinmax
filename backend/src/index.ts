@@ -143,6 +143,17 @@ app.listen(PORT, async () => {
   logger.info(`║  GesWinmax Backend — porta ${PORT}       ║`)
   logger.info(`╚══════════════════════════════════════╝\n`)
   logger.info('✅ Backend pronto — sync manual disponível via API')
+  // Confirma no arranque que o Chromium do Playwright está presente. Os browsers
+  // são instalados no build (ver render.yaml) e não no comando de arranque, pelo
+  // que uma instalação em falta tem de ser visível AQUI e não só quando o
+  // primeiro RPA falhar.
+  try {
+    const { chromium } = await import('playwright')
+    const exe = chromium.executablePath()
+    logger.info(`🌐 Chromium: ${exe} — ${fs.existsSync(exe) ? 'presente' : '⚠️ NÃO ENCONTRADO (o RPA vai falhar)'}`)
+  } catch (e) {
+    logger.error(`🌐 Chromium: não foi possível verificar — ${e}`)
+  }
   // Fecha jobs que ficaram em "ativo" por o processo ter sido suspenso a meio
   // (ver services/jobsWatchdog.ts) e repete a verificação a cada 30 min.
   iniciarWatchdog()

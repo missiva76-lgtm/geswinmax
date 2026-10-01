@@ -11,6 +11,7 @@ import { logger } from '../services/logger'
 import { appendJobLog, db } from '../services/firebase'
 import { acquireBrowserLock } from '../services/browserLock'
 import { clicarToolboxPorTitulo } from './toolboxHelper'
+import { loginWinmax } from './loginWinmax'
 
 interface RPAConfig {
   winmaxUrl: string
@@ -281,51 +282,22 @@ export class WinmaxRPA {
   }
 
   async login(): Promise<void> {
-    // WinMax4 abre no MainPage.aspx com iframe UserAuthentication_content
-    const url = `https://app102.winmax4.com/MainPage.aspx?CompanyCode=${this.config.companyCode}`
-    await this.log(`🔑 Login: ${url}`)
-    await this.page!.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await this.page!.waitForTimeout(2000)
-
-    // Aguarda iframe de autenticação
-    await this.page!.waitForFunction(
-      () => !!document.getElementById('UserAuthentication_content'), undefined,
-      { timeout: 60000 }
-    )
-
-    // Preenche utilizador e password no iframe
-    await this.page!.evaluate(({ user, pass }: { user: string; pass: string }) => {
-      const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      const doc = f?.contentDocument
-      if (!doc) return
-      const u = doc.getElementById('txtUserLogin')    as HTMLInputElement
-      const p = doc.getElementById('txtUserPassword') as HTMLInputElement
-      if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
-      if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
-    }, { user: this.config.utilizador, pass: this.config.password })
-    await this.page!.waitForTimeout(500)
-
-    // Clica Confirmar — o WinMax4 faz uma navegação após login bem sucedido
-    await Promise.all([
-      this.page!.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
-      this.page!.evaluate(() => {
-        const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-        ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-      })
-    ])
-    await this.page!.waitForTimeout(2000)
-
-    // Verifica se o login foi bem sucedido — aguarda que o Toolbox esteja presente
+    // Login centralizado em rpa/loginWinmax.ts. Ver o cabeçalho desse ficheiro: o
+    // formulário era submetido vazio quando o documento dentro do iframe de
+    // autenticação ainda não estava carregado (diagnosticado a 01/10/2026 no log do
+    // Arquivo Digital). O login partilhado espera pelos CAMPOS, confirma que os
+    // valores ficaram escritos e só então confirma.
+    await this.log(`🔑 Login: https://app102.winmax4.com/MainPage.aspx?CompanyCode=${this.config.companyCode}`)
     try {
-      await this.page!.waitForFunction(
-        () => !!document.getElementById('Toolbox_content'), undefined,
-        { timeout: 60000 }
-      )
-    } catch {
-      await this.page!.screenshot({ path: 'logs/erro-login.png' })
-      throw new Error('Login falhou — Toolbox não carregou após autenticação')
+      await loginWinmax(this.page!, {
+        companyCode: this.config.companyCode,
+        utilizador:  this.config.utilizador,
+        password:    this.config.password,
+      }, (m) => this.log(m), { prefixo: '  ' })
+    } catch (e) {
+      await this.page!.screenshot({ path: 'logs/erro-login.png' }).catch(() => {})
+      throw e
     }
-    await this.log('✅ Login OK')
   }
 
   private async iframeExiste(iframeId: string): Promise<boolean> {

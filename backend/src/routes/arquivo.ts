@@ -4,6 +4,7 @@ import { db } from '../services/firebase'
 import { keepAliveInicio, keepAliveFim } from '../services/keepAlive'
 import { syncArquivoDigital } from '../sync/syncArquivoDigital'
 import { logger } from '../services/logger'
+import { loginWinmax } from '../rpa/loginWinmax'
 
 const router = Router()
 
@@ -115,24 +116,9 @@ router.get('/download/:ficheiro', async (req: Request, res: Response) => {
     const context = await browser.newContext({ acceptDownloads: true })
     const page    = await context.newPage()
 
-    // Login
-    await page.goto(`${baseUrl}/MainPage.aspx?CompanyCode=${company}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('UserAuthentication_content'), undefined, { timeout: 60000 })
-    await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
-      const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      const doc = f?.contentDocument
-      const u = doc?.getElementById('txtUserLogin')   as HTMLInputElement
-      const p = doc?.getElementById('txtUserPassword') as HTMLInputElement
-      if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
-      if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
-    }, { user: config.utilizador || '', pass: config.password || '' })
-    await page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-    })
-    await page.waitForTimeout(3000)
-    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 90000 }).catch(() => {})
+    // Login centralizado em rpa/loginWinmax.ts (ver cabeçalho desse ficheiro).
+    await loginWinmax(page, { ...config, company_code: company, winmax_url: baseUrl },
+      (m) => { logger.info(`[arquivo/download] ${m}`) })
 
     // CORRIGIDO 28/07/2026: o endereço "DigitalArchiveFileHandler.aspx?file=..." que
     // aqui se usava NUNCA foi confirmado a partir da aplicação — era uma suposição, e
@@ -325,23 +311,9 @@ router.get('/diagnostico', async (_req: Request, res: Response) => {
     const context = await browser.newContext()
     const page    = await context.newPage()
 
-    await page.goto(`${baseUrl}/MainPage.aspx?CompanyCode=${company}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await page.waitForTimeout(2000)
-    await page.waitForFunction(() => !!document.getElementById('UserAuthentication_content'), undefined, { timeout: 60000 })
-    await page.evaluate(({ user, pass }: { user: string; pass: string }) => {
-      const f   = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      const doc = f?.contentDocument
-      const u = doc?.getElementById('txtUserLogin')   as HTMLInputElement
-      const p = doc?.getElementById('txtUserPassword') as HTMLInputElement
-      if (u) { u.value = user; u.dispatchEvent(new Event('change', { bubbles: true })) }
-      if (p) { p.value = pass; p.dispatchEvent(new Event('change', { bubbles: true })) }
-    }, { user: config.utilizador || '', pass: config.password || '' })
-    await page.evaluate(() => {
-      const f = document.getElementById('UserAuthentication_content') as HTMLIFrameElement
-      ;(f?.contentDocument?.getElementById('wucButtonConfirm_linkButton1') as HTMLElement)?.click()
-    })
-    await page.waitForTimeout(3000)
-    await page.waitForFunction(() => !!document.getElementById('Toolbox_content'), undefined, { timeout: 90000 })
+    // Login centralizado em rpa/loginWinmax.ts (ver cabeçalho desse ficheiro).
+    await loginWinmax(page, { ...config, company_code: company, winmax_url: baseUrl },
+      (m) => { logger.info(`[arquivo/diagnostico] ${m}`) })
 
     const encontrou = await clicarToolboxPorTitulo(page, 'Arquivo digital')
     if (!encontrou) throw new Error('Atalho "Arquivo digital" não encontrado no Toolbox')
