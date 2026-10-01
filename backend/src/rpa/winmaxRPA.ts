@@ -6,7 +6,7 @@
 import * as path from 'path'
 import * as fs from 'fs'
 import { Browser, BrowserContext, Page, chromium } from 'playwright'
-import { Fatura, ResultadoFatura, ErroLinha } from '../types'
+import { Fatura, LinhaFatura, ResultadoFatura, ErroLinha } from '../types'
 import { logger } from '../services/logger'
 import { appendJobLog, db } from '../services/firebase'
 import { acquireBrowserLock } from '../services/browserLock'
@@ -334,6 +334,143 @@ export class WinmaxRPA {
         overlay.style.pointerEvents = 'none'
       }
     }).catch(() => {})
+  }
+
+  /**
+   * Lê de volta as linhas da grelha do documento e confronta cada uma com o
+   * ficheiro: artigo, quantidade e preço unitário.
+   *
+   * O layout de colunas da grelha do WinMax4 não está documentado, pelo que a
+   * leitura é GENÉRICA: para cada linha recolhe o texto de todas as células e o
+   * valor de todos os campos, e procura nesse conjunto o código do artigo e os
+   * dois números esperados. Cada linha da grelha só pode servir uma linha do
+   * ficheiro, para que duas linhas do mesmo artigo com valores diferentes (caso
+   * real: dois KM na mesma fatura) tenham de existir as duas.
+   *
+   * O conteúdo lido é escrito no log, para a conferência deixar de depender de
+   * suposições sobre as colunas.
+   */
+  private async validarLinhasDaGrelha(fatura: Fatura): Promise<void> {
+    const grelha = await this.lerGrelha()
+    if (grelha === null) {
+      // Não bloqueia o fecho: a contagem de linhas acima já correu e uma falha de
+      // leitura não é prova de que o documento esteja errado.
+      await this.log('  ⚠️ Não foi possível reler a grelha — validação de conteúdo não aplicada')
+      return
+    }
+
+    for (const [i, linha] of grelha.entries()) {
+      await this.log(`  🔍 Grelha linha ${i + 1}: ${linha.join(' | ').slice(0, 300)}`)
+    }
+
+    const disponiveis = grelha.map((celulas, idx) => ({ idx, celulas, usada: false }))
+    const faltam: string[] = []
+
+    for (const [i, esperada] of fatura.linhas.entries()) {
+      const esperado = `${esperada.artigo_ref} x${esperada.quantidade} @ ${esperada.preco_unitario}€`
+      const candidata = disponiveis.find(l => !l.usada && this.linhaCorresponde(l.celulas, esperada))
+      if (candidata) {
+        candidata.usada = true
+      } else {
+        // Distingue "o artigo não está lá" de "está mas com valores diferentes",
+        // porque a segunda hipótese é a que já vimos em produção.
+        const comArtigo = disponiveis.find(l => !l.usada && this.contemArtigo(l.celulas, esperada.artigo_ref))
+        faltam.push(comArtigo
+          ? `linha ${i + 1} (${esperado}) está na grelha com valores diferentes: ${comArtigo.celulas.join(' | ').slice(0, 200)}`
+          : `linha ${i + 1} (${esperado}) não foi encontrada na grelha`)
+      }
+    }
+
+    if (faltam.length > 0) {
+      for (const f of faltam) await this.registarDivergencia(f)
+      return
+    }
+
+    const sobram = disponiveis.filter(l => !l.usada)
+    if (sobram.length > 0) {
+      for (const s of sobram) {
+        await this.registarDivergencia(
+          `a grelha tem uma linha que o ficheiro não indica: ${s.celulas.join(' | ').slice(0, 200)}`
+        )
+      }
+      return
+    }
+
+    await this.log(`  ✅ Validação de conteúdo: ${fatura.linhas.length} linha(s) conferem com o ficheiro (artigo, quantidade e preço)`)
+  }
+
+  /** Recolhe, por linha da grelha, o texto das células e o valor dos campos. */
+  private async lerGrelha(): Promise<string[][] | null> {
+    // ATENÇÃO às sequências de escape: este código vai dentro de um template
+    // literal, onde `\s` é lido como `s`. Sem o duplo `\\s`, a expressão regular
+    // passaria a ser /s+/g e apagaria todas as letras "s" do texto lido — o que
+    // faria "SERV REB" tornar-se "ERV REB" e inventaria divergências. Detetado em
+    // testes antes de chegar a produção.
+    const dados = await this.evalIn('DocumentIssue_content', `(function () {
+      var botoes = Array.prototype.slice.call(document.querySelectorAll('[id^="DeleteCompound"]'));
+      return botoes.map(function (b) {
+        var tr = b.closest ? b.closest('tr') : null;
+        if (!tr) return [];
+        var valores = [];
+        Array.prototype.slice.call(tr.querySelectorAll('td')).forEach(function (td) {
+          var t = (td.innerText || td.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (t) valores.push(t);
+        });
+        Array.prototype.slice.call(tr.querySelectorAll('input, select')).forEach(function (el) {
+          var v = el.value;
+          if (el.tagName === 'SELECT' && el.selectedIndex >= 0) v = el.options[el.selectedIndex].text;
+          if (v) valores.push(String(v).replace(/\\s+/g, ' ').trim());
+        });
+        return valores;
+      });
+    })()`).catch(() => null) as string[][] | null
+    if (!Array.isArray(dados)) return null
+    return dados.map(l => (Array.isArray(l) ? l.filter(v => typeof v === 'string') : []))
+  }
+
+  /** O código do artigo aparece como palavra inteira em alguma célula? */
+  private contemArtigo(celulas: string[], artigo: string): boolean {
+    const ref = artigo.trim().toUpperCase()
+    if (!ref) return false
+    return celulas.some(c => {
+      const texto = c.toUpperCase()
+      if (texto === ref) return true
+      // Palavra inteira: evita que "TX" case dentro de "TAXA" ou "MATRIZ".
+      return new RegExp(`(^|[^A-Z0-9])${ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Z0-9]|$)`).test(texto)
+    })
+  }
+
+  /** Converte números no formato pt-PT ("1.234,56", "35,00") presentes nas células. */
+  private numerosDasCelulas(celulas: string[]): number[] {
+    const nums: number[] = []
+    for (const c of celulas) {
+      const encontrados = c.match(/-?\d{1,3}(?:[. ]\d{3})*(?:,\d+)?|-?\d+(?:[.,]\d+)?/g) || []
+      for (const e of encontrados) {
+        const limpo = e.includes(',')
+          ? e.replace(/[. ]/g, '').replace(',', '.')   // 1.234,56 -> 1234.56
+          : e.replace(/ /g, '')
+        const n = Number(limpo)
+        if (Number.isFinite(n)) nums.push(n)
+      }
+    }
+    return nums
+  }
+
+  private linhaCorresponde(celulas: string[], esperada: LinhaFatura): boolean {
+    if (!this.contemArtigo(celulas, esperada.artigo_ref)) return false
+    const nums = this.numerosDasCelulas(celulas)
+    // Tolerâncias: a grelha arredonda a 2 decimais e a quantidade aparece como
+    // "35,00"; o preço pode vir com mais decimais do que o ficheiro.
+    const temQuantidade = nums.some(n => Math.abs(n - esperada.quantidade) <= 0.005)
+    // Com desconto, a grelha pode mostrar o preço unitário OU o preço já
+    // descontado, dependendo da coluna. Aceita qualquer um dos dois: o objetivo
+    // é detetar valores errados, não impor a coluna que o WinMax4 escolhe.
+    const precosAceitaveis = [esperada.preco_unitario]
+    if (esperada.desconto_pct > 0) {
+      precosAceitaveis.push(esperada.preco_unitario * (1 - esperada.desconto_pct / 100))
+    }
+    const temPreco = precosAceitaveis.some(p => nums.some(n => Math.abs(n - p) <= 0.005))
+    return temQuantidade && temPreco
   }
 
   private async evalIn(iframeId: string, code: string): Promise<unknown> {
@@ -1534,6 +1671,13 @@ export class WinmaxRPA {
     } else if (linhasNaGrelha >= 0) {
       await this.log(`  ✅ Validação: ${linhasNaGrelha} linha(s) na grelha, conforme o ficheiro`)
     }
+
+    // VALIDAÇÃO DO CONTEÚDO DE CADA LINHA (releitura da grelha) — 01/10/2026.
+    // Contar linhas não chega: em produção já aconteceu o TX entrar sem artigo, os
+    // KM ficarem com quantidade 1 em vez de 35 e o preço ficar a zero — tudo com a
+    // contagem certa. Esta validação lê de volta o que está na grelha e confronta
+    // com o ficheiro, antes de fechar.
+    await this.validarLinhasDaGrelha(fatura)
 
     for (const { linha, idx } of linhasComComentario) {
       const okComentario = await this.adicionarComentario(linha.comentario!, idx)
